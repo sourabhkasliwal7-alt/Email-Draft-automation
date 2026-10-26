@@ -8,20 +8,23 @@
     "start": "tsx src/index.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:pgboss-sql": "tsx scripts/gen-pgboss-sql.ts"
   },
   "dependencies": {
+    "@mastra/core": "0.24.9",
     "@outreach/adapters": "workspace:*",
     "@outreach/core": "workspace:*",
     "@outreach/db": "workspace:*",
     "@outreach/importer": "workspace:*",
     "dotenv": "16.4.7",
+    "pg": "8.16.3",
+    "pg-boss": "10.4.2",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "20.17.10",
     "@types/pg": "8.11.10",
-    "pg": "8.13.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "2.1.8"

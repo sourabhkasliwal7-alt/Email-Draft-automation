@@ -908,6 +908,7 @@ export type Database = {
           finished_at: string | null
           id: string
           job_id: string
+          output: Json
           output_ref: string | null
           started_at: string | null
           status: string
@@ -921,6 +922,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           job_id: string
+          output?: Json
           output_ref?: string | null
           started_at?: string | null
           status?: string
@@ -934,6 +936,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           job_id?: string
+          output?: Json
           output_ref?: string | null
           started_at?: string | null
           status?: string
@@ -953,14 +956,19 @@ export type Database = {
       jobs: {
         Row: {
           attempts: number
+          batch_id: string | null
           campaign_id: string | null
+          campaign_lead_id: string | null
           created_at: string
+          dispatched_at: string | null
           id: string
           idempotency_key: string
           last_error: string | null
           locked_at: string | null
           locked_by: string | null
           payload: Json
+          queue_job_id: string | null
+          result: Json
           run_after: string
           status: string
           type: string
@@ -968,14 +976,19 @@ export type Database = {
         }
         Insert: {
           attempts?: number
+          batch_id?: string | null
           campaign_id?: string | null
+          campaign_lead_id?: string | null
           created_at?: string
+          dispatched_at?: string | null
           id?: string
           idempotency_key: string
           last_error?: string | null
           locked_at?: string | null
           locked_by?: string | null
           payload?: Json
+          queue_job_id?: string | null
+          result?: Json
           run_after?: string
           status?: string
           type: string
@@ -983,20 +996,32 @@ export type Database = {
         }
         Update: {
           attempts?: number
+          batch_id?: string | null
           campaign_id?: string | null
+          campaign_lead_id?: string | null
           created_at?: string
+          dispatched_at?: string | null
           id?: string
           idempotency_key?: string
           last_error?: string | null
           locked_at?: string | null
           locked_by?: string | null
           payload?: Json
+          queue_job_id?: string | null
+          result?: Json
           run_after?: string
           status?: string
           type?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "jobs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_batches"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "jobs_campaign_id_fkey"
             columns: ["campaign_id"]
@@ -1010,6 +1035,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_campaign_performance"
             referencedColumns: ["campaign_id"]
+          },
+          {
+            foreignKeyName: "jobs_campaign_lead_id_fkey"
+            columns: ["campaign_lead_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_leads"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1093,6 +1125,75 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      pipeline_batches: {
+        Row: {
+          campaign_id: string
+          created_at: string
+          estimate: Json
+          fanout_done: boolean
+          finished_at: string | null
+          id: string
+          label: string | null
+          pause_detail: Json
+          pause_reason: string | null
+          paused_at: string | null
+          started_at: string
+          started_by: string | null
+          status: string
+          totals: Json
+          updated_at: string
+        }
+        Insert: {
+          campaign_id: string
+          created_at?: string
+          estimate?: Json
+          fanout_done?: boolean
+          finished_at?: string | null
+          id?: string
+          label?: string | null
+          pause_detail?: Json
+          pause_reason?: string | null
+          paused_at?: string | null
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          totals?: Json
+          updated_at?: string
+        }
+        Update: {
+          campaign_id?: string
+          created_at?: string
+          estimate?: Json
+          fanout_done?: boolean
+          finished_at?: string | null
+          id?: string
+          label?: string | null
+          pause_detail?: Json
+          pause_reason?: string | null
+          paused_at?: string | null
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          totals?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_batches_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_batches_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "v_campaign_performance"
+            referencedColumns: ["campaign_id"]
+          },
+        ]
       }
       price_table: {
         Row: {
@@ -1204,6 +1305,7 @@ export type Database = {
           error: string | null
           finished_at: string | null
           id: string
+          idempotency_key: string | null
           provider: string | null
           started_at: string | null
           status: string
@@ -1217,6 +1319,7 @@ export type Database = {
           error?: string | null
           finished_at?: string | null
           id?: string
+          idempotency_key?: string | null
           provider?: string | null
           started_at?: string | null
           status?: string
@@ -1230,6 +1333,7 @@ export type Database = {
           error?: string | null
           finished_at?: string | null
           id?: string
+          idempotency_key?: string | null
           provider?: string | null
           started_at?: string | null
           status?: string
@@ -1489,9 +1593,13 @@ export type Database = {
           cost_usd: number
           created_at: string
           id: string
+          idempotency_key: string | null
+          is_mock: boolean
           job_id: string | null
           operation: string
           provider: string
+          status: string
+          step: string | null
           units: Json
           updated_at: string
         }
@@ -1501,9 +1609,13 @@ export type Database = {
           cost_usd?: number
           created_at?: string
           id?: string
+          idempotency_key?: string | null
+          is_mock?: boolean
           job_id?: string | null
           operation: string
           provider: string
+          status?: string
+          step?: string | null
           units?: Json
           updated_at?: string
         }
@@ -1513,9 +1625,13 @@ export type Database = {
           cost_usd?: number
           created_at?: string
           id?: string
+          idempotency_key?: string | null
+          is_mock?: boolean
           job_id?: string | null
           operation?: string
           provider?: string
+          status?: string
+          step?: string | null
           units?: Json
           updated_at?: string
         }

@@ -7,6 +7,7 @@
 | 2 | Auth and setup screens | DONE | 2026-10-26 |
 | 3 | CSV/XLSX import | DONE | 2026-10-26 |
 | 4 | Queue and workflow engine | next | |
+| 4A | Automatic Apollo lead pull (Clay-style trigger) | queued: runs right after Phase 4 (plan updated 2026-10-26) | |
 | 5-13 | | not started | |
 
 ## Phase 3 - CSV/XLSX import (2026-10-26)

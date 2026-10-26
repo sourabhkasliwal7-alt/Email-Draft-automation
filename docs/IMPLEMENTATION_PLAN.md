@@ -66,7 +66,7 @@ You are the lead automation engineer building the "AI Outreach Engine" end to en
 
 SOURCES OF TRUTH (read fully before writing code):
 - docs/SPEC.docx  (requirements v2; Section 23 overrides older wording about sending)
-- docs/IMPLEMENTATION_PLAN.md  (phases 0-13 and their mega prompts)
+- docs/IMPLEMENTATION_PLAN.md  (phases 0-13 plus 4A, and their mega prompts)
 - PROGRESS.md, BLOCKERS.md, CLAUDE.md  (create them in Phase 0 if missing)
 
 TOOLS:
@@ -131,6 +131,7 @@ Each phase ends with something you can see in the UI, so progress is checkable e
 | 2 Auth and setup screens | Login, roles, campaigns, offers, suppression, settings | Create a campaign and offer |
 | 3 CSV/XLSX import | Upload, mapping, validation, dedupe, dry run, error export | Import a messy Apollo CSV |
 | 4 Queue and workflow engine | pg-boss jobs, Mastra pipeline, resume, spend caps | Start, pause, resume a batch |
+| 4A Apollo auto pull | Start workflow pulls leads from Apollo by itself; CSV fallback | Click Start, leads appear |
 | 5 Qualification and scoring | ICP filters, 0 to 100 score with reasons | Score breakdown on a lead |
 | 6 Research and hiring signals | Website, careers, job boards, search, evidence store | Evidence with source links |
 | 7 Crunchbase | Adapter (flagged), CSV fallback, funding signals | Funding signal with date and source |
@@ -305,6 +306,49 @@ same lead enqueued twice (singleton key per campaign_lead + step); cap hit mid-b
 lead added to DNC while queued (skipped at next step); campaign paused while running.
 TESTS: integration tests with mock adapters for crash/resume, caps and duplicates.
 Then update PROGRESS.md, commit, start Phase 5.
+```
+
+### Phase 4A: Automatic Apollo lead pull (Clay-style trigger)
+
+Added 26 Oct 2026. Runs right after Phase 4 and before Phase 5. With this, "Start workflow" pulls leads from Apollo by itself; CSV upload stays as the fallback.
+
+```text
+PHASE 4A: AUTOMATIC APOLLO LEAD PULL. Follow the Master Autopilot rules.
+GOAL: One click on "Start workflow" pulls leads from Apollo and runs the whole pipeline,
+like Clay. CSV upload remains available as a fallback.
+BUILD:
+- Campaign setting "Lead source": CSV upload | Apollo search (default Apollo search
+  when APOLLO_ENABLED=true and the key works, else CSV upload).
+- Apollo search fields on the campaign (new step in the campaign wizard):
+  job titles, seniorities, industries/keywords, locations, employee range,
+  max leads per run, max leads per day. Prefill them from the campaign ICP.
+  Optional: paste an Apollo saved-search URL; parse the filters it contains where
+  possible and show them for confirmation.
+- ApolloAdapter (live + mock): searchPeople(filters, page), getOrganization(domain),
+  revealEmail(personId) using ONLY Apollo's official API and APOLLO_API_KEY.
+  Check the installed docs/API reference for exact endpoints; do not guess.
+- "Start workflow" flow:
+  1. Estimate leads and cost, show confirm dialog.
+  2. Pull pages from Apollo up to the per-run cap; save them as an import batch
+     (source = apollo) through the SAME Phase 3 pipeline: normalize, validate,
+     dedupe, suppression check, row-level errors.
+  3. Hand new leads to the leadPipeline (qualify -> research -> score -> ...).
+  4. Email reveal still happens only AFTER qualification (Phase 8 gate) to save credits.
+- Pagination with resume: store the last page fetched per campaign run; a crashed
+  run continues from that page without duplicates.
+- Record Apollo credits/calls in usage_records; daily and per-run caps; pause at cap.
+- Settings: "Test Apollo connection" button. 401/403 or no API access -> clear
+  message ("Your Apollo plan does not include API access") and the campaign falls
+  back to CSV upload.
+- Campaign page: "Last pull: N found, N new, N duplicates, N suppressed".
+EDGE CASES: zero results (show the filters used); Apollo returns people without
+company domain (keep, mark low data confidence); same person already in another
+campaign (link, do not re-pull); rate limit 429 (backoff, resume); filters changed
+between runs (new run, old leads kept); key removed mid-run (pause with reason).
+TESTS: mock Apollo adapter with paged fixtures; crash/resume test; cap test;
+no-API-access fallback test; Playwright: create campaign with Apollo source ->
+Start workflow -> leads appear in the campaign.
+Then update PROGRESS.md (add a 4A row), commit "phase 4a: apollo auto pull", start Phase 5.
 ```
 
 ### Phase 5: Qualification and scoring
