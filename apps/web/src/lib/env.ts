@@ -6,6 +6,7 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
   SUPABASE_SECRET_KEY: z.string().min(1).optional(),
+  NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
   WORKER_STALE_AFTER_SECONDS: z.coerce.number().int().min(1).default(90),
 });
 
@@ -32,4 +33,12 @@ export function loadWebEnv(rawEnv: Record<string, string | undefined> = process.
   }
   if (problems.length || !parsed.success) throw new EnvError(problems);
   return parsed.data;
+}
+
+/** Public Supabase settings, or null when the app runs without a database (mock mode, zero keys). */
+export function getSupabasePublic(rawEnv: Record<string, string | undefined> = process.env) {
+  const env = cleanEnv(rawEnv);
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  return url && key ? { url, key } : null;
 }

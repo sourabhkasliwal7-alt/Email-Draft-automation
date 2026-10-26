@@ -25,6 +25,10 @@ pnpm dev                    # web on :3000, worker heartbeat
 Open http://localhost:3000 - the badge turns green; `GET /api/health` returns the JSON report.
 Add the Supabase variables to `.env` to use the real dev database; the worker then writes `worker_heartbeats`.
 
+## First user
+
+Sign-up is closed; users are created by an admin: `pnpm user:create --email you@company.com --role admin` (prints a one-time password). `--disable` / `--enable` turns access off or on immediately.
+
 ## Scripts
 
 `pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm e2e` (Playwright, needs `pnpm --filter @outreach/web exec playwright install chromium` once) · `pnpm build` · `pnpm format`

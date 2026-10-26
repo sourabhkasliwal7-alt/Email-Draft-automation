@@ -42,7 +42,7 @@ describe.skipIf(!hasDb)("database SQL suites", () => {
 
 describe("suite files", () => {
   it("every suite ends in SUITE_OK so it always rolls back", () => {
-    expect(suites.length).toBeGreaterThanOrEqual(3);
+    expect(suites.length).toBeGreaterThanOrEqual(4);
     for (const f of suites) {
       expect(readFileSync(join(testsDir, f), "utf8")).toContain("raise exception 'SUITE_OK'");
     }

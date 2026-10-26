@@ -2,7 +2,9 @@
   "name": "ai-outreach-engine",
   "private": true,
   "packageManager": "pnpm@9.15.9",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "pnpm --parallel --filter @outreach/web --filter @outreach/worker dev",
     "dev:web": "pnpm --filter @outreach/web dev",
@@ -13,7 +15,8 @@
     "test": "pnpm -r --if-present test",
     "e2e": "pnpm --filter @outreach/web e2e",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "user:create": "pnpm --filter @outreach/worker exec tsx src/cli/create-user.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

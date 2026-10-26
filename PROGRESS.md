@@ -4,8 +4,25 @@
 |-------|-------|--------|------|
 | 0 | Foundation | DONE (see deviations) | 2026-10-26 |
 | 1 | Database | DONE | 2026-10-26 |
-| 2 | Auth and setup screens | next | |
-| 3-13 | | not started | |
+| 2 | Auth and setup screens | DONE | 2026-10-26 |
+| 3 | CSV/XLSX import | next | |
+| 4-13 | | not started | |
+
+## Phase 2 - Auth and setup screens (2026-10-26)
+
+**Built**
+- Supabase Auth: email + password and optional magic link (never creates accounts). `src/proxy.ts` (Next 16 name for middleware) refreshes the session with `getClaims()` and sends anonymous visitors to /login (with a safe `next`). Authorization is re-checked against the database on every page and every server action (`lib/auth.ts`: `requireUser`, `guardAction`, pure `evaluateGuard`).
+- Roles, one matrix in `packages/core/src/permissions.ts` (UI, pages, actions) mirrored by RLS: reviewer = review/edit/approve a Gmail DRAFT only; **only sender and admin approve or send**; operator runs campaigns/offers/suppression; admin owns settings, inboxes, suppression removal, audit view.
+- Disabled users: `profiles.disabled` makes `private.app_role()` return null, so RLS denies everything at once; pages send them to /no-access on the next request.
+- App shell with all 13 nav items, filtered by role. Real screens: Dashboard (counts), Campaigns (list, 4-step wizard with ICP editor, roles, thresholds, caps, offer, tone, CTA, inbox, send window; edit; archive = soft delete), Offers + case studies (CRUD, allowed claims, allowed numbers), Suppression (add email/domain, global or per campaign, CSV upload with row-level reporting, admin-only removal), Inboxes (limits; Google connect is Phase 10), Settings (models per task, research depth, feature flags CRUNCHBASE_ENABLED / REPLY_TRACKING_ENABLED / SENDING_ENABLED default off, price table, spend caps, recent audit log), Leads (read-only list). Import, Review, Sending, Follow-ups, Jobs, Usage & Cost are labelled placeholders for their phases.
+- Every config change writes `audit_log` by database trigger (campaigns, offers, case studies, suppression, settings, prices, caps, inboxes, profiles; refresh tokens are redacted), so no code path can forget it.
+- Forms keep what the user typed when validation fails (shared `useActionForm`; React 19 would otherwise reset the form).
+- `pnpm user:create --email x --role admin` bootstraps users (prints a one-time password); `--disable` / `--enable` toggles access.
+- Migration `20261026101009_disabled_users_and_audit.sql` (applied through the MCP).
+
+**Verified:** lint, typecheck, 65 unit/DB tests (core 23, db 7 incl. 4 SQL suites, adapters 10, worker 8, web 17), 19 Playwright tests: zero-key mock server (health + login explains missing DB) and the real dev project (login, wrong password, wizard validation and create, offer + case study, suppression form + CSV + admin remove, settings/price/cap validation + audit, disabled user locked out on next request, sign-out, navigation per role, forbidden URLs per role, read-only views). Teardown disables the e2e accounts and archives e2e data; verified 0 usable accounts left.
+
+**How to verify in the UI:** `pnpm user:create --email you@x.com --role admin`, `pnpm dev`, sign in at http://localhost:3000, create a campaign, an offer and a suppression row; sign in as a reviewer and confirm Settings is absent and /settings shows "Not allowed".
 
 ## Phase 0 - Foundation (2026-10-26)
 

@@ -1,0 +1,50 @@
+import { expect, test } from "@playwright/test";
+import { hasDb, loginAs } from "./support";
+
+test.skip(!hasDb(), "needs the Supabase env in the root .env");
+test.describe.configure({ mode: "serial" });
+
+const NAV = {
+  admin: ["Dashboard", "Campaigns", "Import", "Leads", "Review", "Sending", "Follow-ups", "Suppression", "Inboxes", "Offers", "Jobs", "Usage & Cost", "Settings"],
+  operator: ["Dashboard", "Campaigns", "Import", "Leads", "Review", "Sending", "Follow-ups", "Suppression", "Inboxes", "Offers", "Jobs", "Usage & Cost"],
+  reviewer: ["Dashboard", "Campaigns", "Leads", "Review", "Follow-ups", "Suppression", "Offers"],
+  sender: ["Dashboard", "Campaigns", "Leads", "Sending", "Follow-ups", "Suppression", "Offers"],
+} as const;
+
+for (const role of ["admin", "operator", "reviewer", "sender"] as const) {
+  test(`${role}: navigation shows exactly the pages this role may use`, async ({ page }) => {
+    await loginAs(page, role);
+    const links = await page.getByRole("navigation", { name: "Main" }).getByRole("link").allInnerTexts();
+    expect(links).toEqual([...NAV[role]]);
+  });
+}
+
+const FORBIDDEN: Record<string, string[]> = {
+  operator: ["/settings"],
+  reviewer: ["/settings", "/campaigns/new", "/offers/new", "/import", "/inboxes", "/sending", "/jobs", "/usage"],
+  sender: ["/settings", "/campaigns/new", "/offers/new", "/import", "/review", "/inboxes", "/jobs", "/usage"],
+};
+
+for (const [role, paths] of Object.entries(FORBIDDEN)) {
+  test(`${role}: direct URLs outside the role land on the Not allowed page`, async ({ page }) => {
+    await loginAs(page, role as "operator");
+    for (const p of paths) {
+      await page.goto(p);
+      await expect(page, `${role} ${p}`).toHaveURL(/\/forbidden$/);
+      await expect(page.getByTestId("forbidden")).toContainText(`Your role (${role})`);
+    }
+  });
+}
+
+test("reviewer and sender see campaigns and suppression read-only", async ({ page }) => {
+  for (const role of ["reviewer", "sender"] as const) {
+    await loginAs(page, role);
+    await page.goto("/campaigns");
+    await expect(page.getByRole("link", { name: "New campaign" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Archive" })).toHaveCount(0);
+    await page.goto("/suppression");
+    await expect(page.getByRole("button", { name: "Add to list" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Sign out" }).click();
+  }
+});

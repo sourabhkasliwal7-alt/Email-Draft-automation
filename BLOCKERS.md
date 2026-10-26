@@ -10,3 +10,6 @@ Nothing blocks progress yet. Items below need a human at some point; the build c
 | 4 | Google Cloud OAuth client + Gmail API, `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`) | `.env` | Phase 10 | 10 |
 | 5 | Email verifier + Apollo keys; Crunchbase licence decision | `.env` | Phases 7-8 | 7-8 |
 | 6 | Hosting: Vercel (web) + VPS/Railway/Render (worker) | n/a | Phase 13 | 13 |
+| 7 | Supabase Auth: turn on **Leaked password protection** (advisor warning; Auth > Sign In / Providers > Password; may need a paid plan) and turn **off** "Allow new users to sign up" (users are created with `pnpm user:create`; a self-signed-up user has no profile and gets no access anyway) | Supabase dashboard | Advisors > Security shows no warning | before deploy |
+| 8 | Create your first admin: `pnpm user:create --email you@company.com --role admin` | terminal | sign in at /login | now |
+| 9 | e2e creates five `e2e-*@example.com` accounts in the Supabase project during `pnpm e2e` (disabled + banned afterwards). Use a separate dev project if you do not want that in the main one | n/a | `select * from profiles where full_name like 'E2E %'` shows disabled=true | optional |
