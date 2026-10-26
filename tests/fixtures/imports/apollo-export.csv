@@ -1,0 +1,4 @@
+First Name,Last Name,Title,Company,Company Name for Emails,Email,Email Status,Seniority,Departments,# Employees,Industry,Person Linkedin Url,Website,Company Linkedin Url,Country
+Lia,Moss,COO,Iota Ltd,Iota,lia@iota.example.com,Verified,c_suite,operations,"1,200",software,https://www.linkedin.com/in/lia-moss/?trk=x,https://www.iota.example.com,https://linkedin.com/company/iota,India
+Max,Dahl,CTO,Kappa,Kappa,max@kappa.example.com,Guessed,c_suite,engineering,55,logistics,linkedin.com/in/max-dahl,kappa.example.com,,United States
+Nia,Quin,CEO,Lambda,Lambda,nia@lambda.example.com,Bounced,c_suite,,11-50,saas,,lambda.example.com,,India

@@ -45,6 +45,6 @@ test("reviewer and sender see campaigns and suppression read-only", async ({ pag
     await page.goto("/suppression");
     await expect(page.getByRole("button", { name: "Add to list" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.context().clearCookies(); // not "Sign out": that would revoke the shared saved session
   }
 });

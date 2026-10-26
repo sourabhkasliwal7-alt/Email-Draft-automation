@@ -14,11 +14,14 @@
     "@outreach/adapters": "workspace:*",
     "@outreach/core": "workspace:*",
     "@outreach/db": "workspace:*",
+    "@outreach/importer": "workspace:*",
     "dotenv": "16.4.7",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "20.17.10",
+    "@types/pg": "8.11.10",
+    "pg": "8.13.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "2.1.8"

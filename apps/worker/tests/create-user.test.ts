@@ -7,8 +7,15 @@ describe("create-user CLI arguments", () => {
       email: "boss@company.com",
       role: "admin",
       name: "The Boss",
+      password: null,
       action: "create",
     });
+  });
+  it("falls back to ADMIN_* env values and lets flags override them", () => {
+    const env = { ADMIN_EMAIL: "Env@Co.com", ADMIN_PASSWORD: "longenough1", ADMIN_ROLE: "sender", ADMIN_NAME: "Env Name" };
+    expect(parseArgs([], env)).toEqual({ email: "env@co.com", role: "sender", name: "Env Name", password: "longenough1", action: "create" });
+    expect(parseArgs(["--email", "x@y.co", "--role", "admin"], env)).toMatchObject({ email: "x@y.co", role: "admin" });
+    expect(() => parseArgs([], { ...env, ADMIN_PASSWORD: "short" })).toThrow(/at least 8/);
   });
   it("parses disable and enable", () => {
     expect(parseArgs(["--email", "a@b.co", "--disable"]).action).toBe("disable");

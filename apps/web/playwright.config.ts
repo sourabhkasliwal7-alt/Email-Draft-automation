@@ -13,12 +13,14 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
   workers: 1,
-  timeout: 60_000,
+  timeout: 120_000,
+  // Server actions round-trip to the hosted database; 5 s is too tight.
+  expect: { timeout: 20_000 },
   globalSetup: "./e2e/global-setup.ts",
   globalTeardown: "./e2e/global-teardown.ts",
   projects: [
     { name: "zero-key", testMatch: /health\.spec\.ts/, use: { baseURL: `http://localhost:${ZERO_KEY_PORT}` } },
-    { name: "app", testMatch: /app\.spec\.ts|roles\.spec\.ts/, use: { baseURL: `http://localhost:${APP_PORT}` } },
+    { name: "app", testMatch: /app\.spec\.ts|roles\.spec\.ts|import\.spec\.ts/, use: { baseURL: `http://localhost:${APP_PORT}` } },
   ],
   webServer: [
     {

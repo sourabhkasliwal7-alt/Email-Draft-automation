@@ -1,8 +1,14 @@
-import { ROLES, adminClient, e2eEmail, hasDb } from "./support";
+import fs from "node:fs";
+import { cleanupImportData } from "./db-cleanup";
+import { AUTH_DIR, ROLES, adminClient, e2eEmail, hasDb } from "./support";
+import { stopWorkerProcess } from "./worker-process";
 
 /** Leaves no usable test account behind (disabled profile + banned auth user) and archives e2e data. */
 export default async function globalTeardown() {
+  stopWorkerProcess();
+  fs.rmSync(AUTH_DIR, { recursive: true, force: true }); // saved sessions must not outlive the run
   if (!hasDb()) return;
+  await cleanupImportData();
   const admin = adminClient();
   const keys = [...ROLES, "disabled"] as const;
   const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });

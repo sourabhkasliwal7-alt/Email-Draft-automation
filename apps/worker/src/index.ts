@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { config } from "dotenv";
 import { createServiceClient, recordHeartbeat } from "@outreach/db";
 import { loadWorkerEnv } from "./env";
+import { startJobLoop } from "./jobs/runner";
 import { startWorker } from "./worker";
 
 config({ path: join(process.cwd(), "../../.env") });
@@ -24,10 +25,12 @@ async function main() {
       else console.log(`heartbeat (no database configured) ${new Date().toISOString()}`);
     },
   });
+  const jobs = db && !process.argv.includes("--once") ? startJobLoop(db, env.workerId) : null;
 
   const shutdown = () => {
     console.log("worker shutting down");
     worker.stop();
+    jobs?.stop();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

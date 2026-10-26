@@ -328,6 +328,7 @@ export type Database = {
       contacts: {
         Row: {
           company_id: string | null
+          company_name: string | null
           country: string | null
           created_at: string
           dnc: boolean
@@ -344,6 +345,7 @@ export type Database = {
         }
         Insert: {
           company_id?: string | null
+          company_name?: string | null
           country?: string | null
           created_at?: string
           dnc?: boolean
@@ -360,6 +362,7 @@ export type Database = {
         }
         Update: {
           company_id?: string | null
+          company_name?: string | null
           country?: string | null
           created_at?: string
           dnc?: boolean
@@ -694,11 +697,15 @@ export type Database = {
         Row: {
           campaign_id: string | null
           created_at: string
+          dry_run: boolean
+          error: string | null
           file_hash: string
           file_name: string
+          file_size: number | null
           id: string
           mapping: Json
           mode: string
+          runs: number
           sheet: string | null
           status: string
           storage_path: string | null
@@ -709,11 +716,15 @@ export type Database = {
         Insert: {
           campaign_id?: string | null
           created_at?: string
+          dry_run?: boolean
+          error?: string | null
           file_hash: string
           file_name: string
+          file_size?: number | null
           id?: string
           mapping?: Json
           mode?: string
+          runs?: number
           sheet?: string | null
           status?: string
           storage_path?: string | null
@@ -724,11 +735,15 @@ export type Database = {
         Update: {
           campaign_id?: string | null
           created_at?: string
+          dry_run?: boolean
+          error?: string | null
           file_hash?: string
           file_name?: string
+          file_size?: number | null
           id?: string
           mapping?: Json
           mode?: string
+          runs?: number
           sheet?: string | null
           status?: string
           storage_path?: string | null
@@ -806,6 +821,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      import_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          mapping: Json
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mapping: Json
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mapping?: Json
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       inboxes: {
         Row: {

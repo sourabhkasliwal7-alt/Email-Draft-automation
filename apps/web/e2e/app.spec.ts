@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { RUN, hasDb, loginAs, e2eEmail } from "./support";
+import { RUN, hasDb, login, loginAs, e2eEmail } from "./support";
 
 test.skip(!hasDb(), "needs the Supabase env in the root .env");
 test.describe.configure({ mode: "serial" });
@@ -176,7 +176,9 @@ test("a disabled user loses access on the very next request", async ({ page }) =
 });
 
 test("sign out ends the session", async ({ page }) => {
-  await loginAs(page, "operator");
+  // a fresh sign-in (not the shared saved session, which sign-out would revoke for the other tests)
+  await login(page, "operator");
+  await expect(page.getByTestId("user-role")).toHaveText("operator");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goto("/campaigns");

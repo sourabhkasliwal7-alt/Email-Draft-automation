@@ -7,3 +7,6 @@ dist/
 .next/
 coverage/
 *.log
+
+# Playwright saved sessions
+apps/web/e2e/.auth/

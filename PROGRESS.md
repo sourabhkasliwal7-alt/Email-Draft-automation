@@ -5,8 +5,23 @@
 | 0 | Foundation | DONE (see deviations) | 2026-10-26 |
 | 1 | Database | DONE | 2026-10-26 |
 | 2 | Auth and setup screens | DONE | 2026-10-26 |
-| 3 | CSV/XLSX import | next | |
-| 4-13 | | not started | |
+| 3 | CSV/XLSX import | DONE | 2026-10-26 |
+| 4 | Queue and workflow engine | next | |
+| 5-13 | | not started | |
+
+## Phase 3 - CSV/XLSX import (2026-10-26)
+
+**Built**
+- `packages/importer` (pure, unit-tested): encoding detection (UTF-8, BOM, UTF-16, Windows-1252), delimiter detection, quoted commas/newlines, blank rows (original row numbers kept), duplicate headers renamed, header-row detection with override, XLSX via exceljs (worksheet list/picker, dates, numbers-as-text, formulas, hyperlinks, rich text), 50,000-row limit with a clear message, column alias auto-detect, Apollo preset, normalisation (emails lowercased for matching but original kept, URLs/domains, free-mail and social domains never become a company, names incl. Hindi/accents intact, employee counts, email status), campaign validation (research-first allows no email), 3-key dedupe (email, profile URL, company+name accent-insensitive), suppression and DNC check, mode logic (add new / update existing / skip duplicates), formula-injection-safe error CSV.
+- Worker: `import.run` job (chunks of 500, bulk writes with row-by-row fallback, idempotent, resumable from the rows already recorded, progress in `import_batches.totals`, contacts/companies/leads/`lead_events`), DB-backed job runner (atomic claim, retries with backoff, stale-job recovery; pg-boss replaces polling in Phase 4).
+- Web: Import list + upload (private `imports` bucket, SHA-256 file hash, same-file warning), preview of the first 20 rows, sheet picker, header override, mapping UI with auto-detect / Apollo preset / saved templates, modes + dry run, live progress, summary (imported, updated, duplicate, invalid, suppressed, skipped, failed), per-row reasons, "not imported" CSV download.
+- Migration `20261026120000_import_support.sql` (applied by hand in the SQL editor after the MCP declined it): modes, `updated`/`failed` row statuses, `import_templates` (RLS + audit), `contacts.company_name`.
+
+**Verified:** lint, typecheck; 67 unit tests (core 23, importer 30, adapters 10 ...) plus 20 worker tests, of which 11 run against the real dev database and clean up after themselves (0 residue verified); 26 Playwright tests (health, auth, roles, setup screens, and the full import flow incl. dry run, real run, duplicate re-upload, Excel, research-first, 50,001 rows, Windows-1252). Bugs the tests caught and fixed: jsonb lost column order in the CSV, forms were wiped on validation error, sign-out revoked a shared session.
+
+**Notes:** e2e signs in once per role and reuses the session (hosted sign-in rate limit); run the suite at most a few times in a row. The worker must be running for imports (`pnpm dev` starts it). Integration tests remove their data with a direct DB connection, so they need `DATABASE_URL`; without it they are skipped with a warning.
+
+**How to verify in the UI:** Import > choose a campaign and an Apollo CSV > check the preview and mapping > dry run > review the summary > run for real > Leads shows the new people; download the not-imported CSV.
 
 ## Phase 2 - Auth and setup screens (2026-10-26)
 

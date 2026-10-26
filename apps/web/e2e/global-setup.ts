@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { ROLES, adminClient, e2eEmail, hasDb, type E2ERole } from "./support";
+import fs from "node:fs";
+import { chromium } from "@playwright/test";
+import { AUTH_DIR, ROLES, adminClient, authFile, e2eEmail, hasDb, type E2ERole } from "./support";
+import { startWorkerProcess } from "./worker-process";
 
 /**
  * Creates (or re-enables) one user per role with a brand-new random password, so no usable credential
@@ -35,5 +38,31 @@ export default async function globalSetup() {
       .from("profiles")
       .upsert({ user_id: id!, role, full_name: `E2E ${key}`, disabled: false }, { onConflict: "user_id" });
     if (error) throw error;
+  }
+  startWorkerProcess();
+
+  // One real sign-in through the login form per role; tests reuse the saved sessions (see loginAs in support.ts).
+  fs.mkdirSync(AUTH_DIR, { recursive: true });
+  const browser = await chromium.launch();
+  try {
+    for (const { key } of roles) {
+      const context = await browser.newContext({ baseURL: "http://localhost:3101" });
+      const page = await context.newPage();
+      await page.goto("/login");
+      await page.getByLabel("Email", { exact: true }).first().fill(e2eEmail(key));
+      await page.getByLabel("Password").fill(pw);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      try {
+        await page.getByTestId("user-role").waitFor({ timeout: 60_000 });
+      } catch (e) {
+        const shown = (await page.locator("main").innerText().catch(() => "")).replace(/s+/g, " ").slice(0, 300);
+        throw new Error(`Setup sign-in as ${key} failed at ${page.url()}: ${shown}
+${(e as Error).message}`);
+      }
+      await context.storageState({ path: authFile(key) });
+      await context.close();
+    }
+  } finally {
+    await browser.close();
   }
 }
