@@ -23,3 +23,8 @@ Sources of truth: docs/SPEC.docx (v2; Section 23 overrides older sending wording
 ## Roles
 - reviewer: review/edit/regenerate/skip/mark DNC/approve a Gmail DRAFT only. sender + admin: the only roles that approve SENDING or send. Enforced in RLS, server actions and UI.
 - An email with email_status = invalid can never be queued.
+
+## Standing rules for the autopilot run (owner decision, 2026-10-26)
+- Migrations may touch any schema WE own (public, pgboss, new ones). Never write into Supabase-managed schemas (storage, auth, realtime, vault); dashboard-only needs go to BLOCKERS.md "Dashboard steps for owner".
+- If apply_migration is declined, retry once. If it is declined again: do NOT stop the run. Save the SQL in supabase/manual/, list it in BLOCKERS.md under "SQL for owner to run" (exact clicks + a verify query), continue with the code and tests that do not need it, and make tests that need it skip with a loud warning until the object exists. Never apply DDL through execute_sql or a direct connection to get around a decline.
+- Stop the whole run ONLY for: a real email send, real money beyond the configured caps, or deleting data in a non-dev database.
