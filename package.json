@@ -4,8 +4,23 @@
   "packageManager": "pnpm@9.15.9",
   "engines": { "node": ">=20" },
   "scripts": {
+    "dev": "pnpm --parallel --filter @outreach/web --filter @outreach/worker dev",
+    "dev:web": "pnpm --filter @outreach/web dev",
+    "dev:worker": "pnpm --filter @outreach/worker dev",
+    "build": "pnpm --filter @outreach/web build",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --if-present test",
+    "e2e": "pnpm --filter @outreach/web e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "globals": "17.13.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.0"
   }
 }

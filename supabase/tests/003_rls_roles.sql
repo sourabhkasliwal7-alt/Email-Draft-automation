@@ -73,7 +73,7 @@ begin
   if r <> 'operator' then raise exception 'FAIL [role unchanged]: %', r; end if;
   perform pg_temp.expect('operator cannot create profile', pg_temp.try_as('authenticated', u_op, format($q$insert into public.profiles (user_id, role) values (%L, 'admin')$q$, u_none)), 'err:.*row-level security');
   perform pg_temp.expect('operator sees only own profile', pg_temp.try_as('authenticated', u_op, 'select 1 from public.profiles'), '^ok:1$');
-  perform pg_temp.expect('admin sees all profiles', pg_temp.try_as('authenticated', u_admin, 'select 1 from public.profiles'), '^ok:4$');
+  perform pg_temp.expect('admin sees all profiles', pg_temp.try_as('authenticated', u_admin, format('select 1 from public.profiles where user_id in (%L,%L,%L,%L)', u_admin, u_op, u_rev, u_snd)), '^ok:4$');
   perform pg_temp.expect('admin changes a role', pg_temp.try_as('authenticated', u_admin, format($q$update public.profiles set role = 'reviewer' where user_id = %L$q$, u_snd)), '^ok:1$');
   update public.profiles set role = 'sender' where user_id = u_snd;
 
@@ -114,7 +114,7 @@ begin
 
   -- worker (service role) bypasses RLS but not the DB guards
   perform pg_temp.expect('service role reads everything', pg_temp.try_as('service_role', null, 'select 1 from public.campaigns'), '^ok:[1-9]');
-  perform pg_temp.expect('service role writes heartbeat', pg_temp.try_as('service_role', null, $q$update public.worker_heartbeats set last_seen_at = now()$q$), '^ok:1$');
+  perform pg_temp.expect('service role writes heartbeat', pg_temp.try_as('service_role', null, $q$update public.worker_heartbeats set last_seen_at = now() where worker_id = 'rl-worker'$q$), '^ok:1$');
 
   raise exception 'SUITE_OK';
 end $$;
