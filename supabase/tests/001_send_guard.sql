@@ -115,6 +115,18 @@ begin
   perform pg_temp.expect('dnc before send', r, 'err:.*became suppressed');
 
   -- 11. inbox must be active
+  -- an address verified as invalid can never be queued (SPEC 23.3)
+  d3 := pg_temp.mk_draft(v_camp, v_inbox, 'bounce-invalid@sg-test.invalid', 'sg11', v_admin);
+  update public.contacts set email_status = 'invalid' where email_lower = 'bounce-invalid@sg-test.invalid';
+  r := pg_temp.try_as('service_role', null, format($q$insert into public.email_sends (draft_id, send_key, inbox_id, recipient_email, subject, body_text, campaign_id)
+        values (%L, 'k15', %L, 'bounce-invalid@sg-test.invalid', 's', 'b', %L)$q$, d3, v_inbox, v_camp));
+  perform pg_temp.expect('invalid email blocked', r, 'err:.*verified invalid');
+  update public.contacts set email_status = 'risky' where email_lower = 'bounce-invalid@sg-test.invalid';
+  r := pg_temp.try_as('service_role', null, format($q$insert into public.email_sends (draft_id, send_key, inbox_id, recipient_email, subject, body_text, campaign_id)
+        values (%L, 'k16', %L, 'bounce-invalid@sg-test.invalid', 's', 'b', %L)$q$, d3, v_inbox, v_camp));
+  perform pg_temp.expect('non-invalid statuses are accepted', r, '^ok:1$');
+  update public.email_sends set status = 'cancelled' where send_key = 'k16';
+
   update public.inboxes set status = 'paused' where id = v_inbox;
   d3 := pg_temp.mk_draft(v_camp, v_inbox, 'paused@sg-test.invalid', 'sg10', v_admin);
   r := pg_temp.try_as('service_role', null, format($q$insert into public.email_sends (draft_id, send_key, inbox_id, recipient_email, subject, body_text, campaign_id)

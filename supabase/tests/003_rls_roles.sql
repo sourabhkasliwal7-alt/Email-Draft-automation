@@ -77,12 +77,17 @@ begin
   perform pg_temp.expect('admin changes a role', pg_temp.try_as('authenticated', u_admin, format($q$update public.profiles set role = 'reviewer' where user_id = %L$q$, u_snd)), '^ok:1$');
   update public.profiles set role = 'sender' where user_id = u_snd;
 
-  -- approvals: reviewer/admin only, only as themselves, and immutable
-  perform pg_temp.expect('operator cannot approve', pg_temp.try_as('authenticated', u_op, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_op)), 'err:.*row-level security');
-  perform pg_temp.expect('sender cannot approve', pg_temp.try_as('authenticated', u_snd, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_snd)), 'err:.*row-level security');
-  perform pg_temp.expect('reviewer cannot approve as someone else', pg_temp.try_as('authenticated', u_rev, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_admin)), 'err:.*row-level security');
-  perform pg_temp.expect('reviewer approves as self', pg_temp.try_as('authenticated', u_rev, format($q$insert into public.send_approvals (draft_id, approved_by, body_hash) values (%L, %L, 'hash-rl1')$q$, d, u_rev)), '^ok:1$');
-  perform pg_temp.expect('approval cannot be revoked by editing', pg_temp.try_as('authenticated', u_rev, format($q$update public.send_approvals set approved_by = %L$q$, u_admin)), 'err:.*(permission denied|append-only)');
+  -- send approval is SENDER-only (SPEC 23.3): reviewers may approve a Gmail draft, never the sending
+  perform pg_temp.expect('operator cannot approve sending', pg_temp.try_as('authenticated', u_op, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_op)), 'err:.*row-level security');
+  perform pg_temp.expect('reviewer cannot approve sending (as self)', pg_temp.try_as('authenticated', u_rev, format($q$insert into public.send_approvals (draft_id, approved_by, body_hash) values (%L, %L, 'hash-rl1')$q$, d, u_rev)), 'err:.*row-level security');
+  perform pg_temp.expect('reviewer cannot approve sending (as someone else)', pg_temp.try_as('authenticated', u_rev, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_snd)), 'err:.*row-level security');
+  perform pg_temp.expect('sender cannot approve in someone else''s name', pg_temp.try_as('authenticated', u_snd, format($q$insert into public.send_approvals (draft_id, approved_by) values (%L, %L)$q$, d, u_admin)), 'err:.*row-level security');
+  select count(*) into n from public.send_approvals where draft_id = d;
+  if n <> 0 then raise exception 'FAIL [no approval row after rejected attempts]: %', n; end if;
+  perform pg_temp.expect('sender approves sending as self', pg_temp.try_as('authenticated', u_snd, format($q$insert into public.send_approvals (draft_id, approved_by, body_hash) values (%L, %L, 'hash-rl1')$q$, d, u_snd)), '^ok:1$');
+  d_rev := pg_temp.mk_draft(v_camp, v_inbox, 'rl-admin-approved@rl-test.invalid', 'rl3');
+  perform pg_temp.expect('admin approves sending as self', pg_temp.try_as('authenticated', u_admin, format($q$insert into public.send_approvals (draft_id, approved_by, body_hash) values (%L, %L, 'hash-rl3')$q$, d_rev, u_admin)), '^ok:1$');
+  perform pg_temp.expect('approval cannot be revoked by editing', pg_temp.try_as('authenticated', u_snd, format($q$update public.send_approvals set approved_by = %L$q$, u_admin)), 'err:.*(permission denied|append-only)');
 
   -- drafts: reviewer may change status; sender may not
   perform pg_temp.expect('reviewer updates draft status', pg_temp.try_as('authenticated', u_rev, format($q$update public.email_drafts set status = 'needs_review' where id = %L$q$, d)), '^ok:1$');

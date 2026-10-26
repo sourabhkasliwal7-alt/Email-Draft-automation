@@ -45,6 +45,12 @@
 
 **How to verify in the UI:** Supabase dashboard > Table editor: 29 tables, RLS badge on each; `campaigns` has "Demo campaign"; `campaign_leads` has 10 rows; `suppression` has 3. Database > Advisors shows no security issues. Try `delete from campaigns` or `update lead_events ...` in the SQL editor: both are rejected.
 
+**Sender-only send approval (2026-10-26, migration `20261026100000_send_approval_by_sender.sql`)**
+- Roles: reviewer = review, edit, regenerate, skip, mark DNC, approve a Gmail DRAFT only. sender and admin = the only roles that can approve SENDING (`send_approvals` insert, in their own name) or send. Operators cannot approve.
+- DB guard also rejects any email whose contact `email_status` is `invalid`.
+- Applied by hand in the Supabase SQL editor (the MCP declined it), so `supabase_migrations` history does not list it; the DDL is idempotent (drop policy / create or replace) and verified live. Tests 001 and 003 cover: reviewer approval fails, sender and admin approval succeed, invalid-email send blocked.
+
 **Notes for later phases**
 - No profile row is created on sign-up. The first admin must be inserted into `profiles` (service role / SQL editor). Phase 2 handles bootstrap.
+- Phase 2 role guards must follow the sender-only rule above (UI and server actions).
 - Drafts must store `body_hash`; approvals must copy the same hash. Changing a draft after approval requires a new version.

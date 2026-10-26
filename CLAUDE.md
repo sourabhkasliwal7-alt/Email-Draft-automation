@@ -19,3 +19,7 @@ Sources of truth: docs/SPEC.docx (v2; Section 23 overrides older sending wording
 - A phase is DONE only when lint, typecheck, tests pass, advisors show no new errors, PROGRESS.md is updated and a commit "phase <n>: <title>" exists.
 - Missing credentials: real adapter + mock adapter behind one interface, env-flag selected, item added to BLOCKERS.md.
 - Timestamps are stored in UTC (timestamptz) and displayed in Asia/Kolkata.
+
+## Roles
+- reviewer: review/edit/regenerate/skip/mark DNC/approve a Gmail DRAFT only. sender + admin: the only roles that approve SENDING or send. Enforced in RLS, server actions and UI.
+- An email with email_status = invalid can never be queued.
