@@ -5,7 +5,8 @@ import { useId, useState } from "react";
 
 /**
  * A small (?) next to a word a non-technical person may not know. Opens on hover, keyboard focus or tap, closes on Escape.
- * The explanation is announced through aria-describedby.
+ * The explanation is announced through aria-describedby. The button is named "More information" on purpose: a name that repeated the field label
+ * would make the label and its (?) button answer to the same name (confusing for screen readers and for tests that look a field up by its label).
  */
 export function HelpTip({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -14,7 +15,8 @@ export function HelpTip({ label, children }: { label: string; children: React.Re
     <span className="relative inline-flex align-middle" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        aria-label={`Help: ${label}`}
+        aria-label="More information"
+        data-topic={label}
         aria-describedby={open ? id : undefined}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

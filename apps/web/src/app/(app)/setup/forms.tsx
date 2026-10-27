@@ -122,7 +122,7 @@ export function RunRulesForm({
             <Checkbox name="dry_run" label="Always run as a test run (no drafts, no credits)" defaultChecked={values.dry_run} />
             <Checkbox name="allow_risky" label="Also write to risky or catch-all email addresses" defaultChecked={values.allow_risky} />
             <Checkbox name="skip_verification" label="Skip email verification (testing only)" defaultChecked={values.skip_verification} />
-            <p className="rounded-md border border-yellow-400 bg-yellow-50 p-2 text-xs text-yellow-900" data-testid="skip-verification-warning">
+            <p className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900" data-testid="skip-verification-warning">
               Testing only. With this on, addresses are not checked before an email is written, so some may bounce and hurt your sender reputation. Home shows a yellow warning while it is on. Keep it OFF for real work.
             </p>
           </div>
@@ -162,7 +162,7 @@ export function PriceForm() {
   const { state, onSubmit: action, pending } = useActionForm(addPrice);
   const err = state.fieldErrors ?? {};
   return (
-    <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
+    <form onSubmit={action} className="space-y-3 rounded-xl border bg-card p-4 shadow-card" noValidate>
       <h3 className="font-medium">Add a price</h3>
       <p className="text-xs text-muted-foreground">Costs are computed from recorded usage x these prices. A new row applies from now on.</p>
       <div className="grid grid-cols-3 gap-3">
@@ -186,7 +186,7 @@ export function SpendCapForm({ campaigns }: { campaigns: { id: string; name: str
   const { state, onSubmit: action, pending } = useActionForm(addSpendCap);
   const err = state.fieldErrors ?? {};
   return (
-    <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
+    <form onSubmit={action} className="space-y-3 rounded-xl border bg-card p-4 shadow-card" noValidate>
       <h3 className="font-medium">Add a spend cap</h3>
       <p className="text-xs text-muted-foreground">No paid call is made once a cap that applies to it would be exceeded.</p>
       <div className="grid grid-cols-2 gap-3">

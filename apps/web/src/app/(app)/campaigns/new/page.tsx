@@ -14,12 +14,21 @@ export default async function NewCampaignPage() {
   return (
     <>
       <BackLink href="/setup?tab=campaigns">Setup</BackLink>
-      <PageHeader title="New campaign" description="Who to write to, where the leads come from and where the drafts go." />
-      <CampaignForm
-        defaults={NEW_CAMPAIGN}
-        offers={(offers ?? []).map((o) => ({ id: o.id, name: o.name, caseStudies: o.case_studies.filter((c) => !c.deleted_at).map((c) => c.title) }))}
-        inboxes={inboxes ?? []}
+      <PageHeader
+        title="New campaign"
+        description="Who to write to, where the leads come from and where the drafts go."
       />
+      <div className="py-6">
+        <CampaignForm
+          defaults={NEW_CAMPAIGN}
+          offers={(offers ?? []).map((o) => ({
+            id: o.id,
+            name: o.name,
+            caseStudies: o.case_studies.filter((c) => !c.deleted_at).map((c) => c.title),
+          }))}
+          inboxes={inboxes ?? []}
+        />
+      </div>
     </>
   );
 }

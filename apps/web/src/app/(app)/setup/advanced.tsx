@@ -82,7 +82,7 @@ export async function AdvancedTab({ role, workflow: wf }: { role: Role; workflow
           </p>
           <ul className="space-y-3">
             {CONNECTIONS.map((c) => (
-              <li key={c.id} className="space-y-2 rounded-lg border p-4" data-testid={`connection-${c.id}`}>
+              <li key={c.id} className="space-y-2 rounded-xl border bg-card p-4 shadow-card" data-testid={`connection-${c.id}`}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="font-medium">{c.name}</p>
@@ -169,7 +169,7 @@ export async function AdvancedTab({ role, workflow: wf }: { role: Role; workflow
           ) : (
             <ul className="space-y-2 text-sm">
               {caps.map((c) => (
-                <li key={c.id} className="flex items-center justify-between rounded-md border p-3" data-testid="cap-row">
+                <li key={c.id} className="flex items-center justify-between rounded-xl border bg-card p-3.5" data-testid="cap-row">
                   <span>
                     {c.scope === "provider" ? `provider ${c.provider}` : c.scope === "campaign" ? `campaign ${c.campaigns?.name ?? ""}` : "global"} · {c.period} · ${c.cap_usd}
                   </span>

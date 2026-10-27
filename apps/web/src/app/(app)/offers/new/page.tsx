@@ -8,8 +8,10 @@ export default async function NewOfferPage() {
   return (
     <>
       <BackLink href="/setup?tab=offers">Setup</BackLink>
-      <PageHeader title="New offer" />
-      <OfferForm />
+      <PageHeader title="New offer" description="Say what you offer and what the emails may claim. You add case studies on the next screen." />
+      <div className="py-6">
+        <OfferForm />
+      </div>
     </>
   );
 }

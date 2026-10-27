@@ -63,7 +63,7 @@ export async function cleanup(tag: string, storagePaths: string[] = []) {
     await q(`delete from public.signals where company_id in (select id from _co) or company_id in (select id from public.companies where domain like $1)`);
     await q(`delete from public.evidence_items where company_id in (select id from _co) or company_id in (select id from public.companies where domain like $1)`);
     await q(`delete from public.companies where (id in (select id from _co) and not exists (select 1 from public.contacts x where x.company_id = companies.id)) or domain like $1`);
-    await q(`delete from public.suppression where reason like $1`);
+    await q(`delete from public.suppression where reason like $1 or email_lower like $1 or domain like $1`);
     await q(`delete from public.spend_caps where campaign_id in (select id from _c)`);
     await q(`delete from public.price_table where unit like $1`);
     await q(`delete from public.campaigns where id in (select id from _c)`);

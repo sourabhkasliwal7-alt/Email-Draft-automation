@@ -52,12 +52,21 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   return (
     <>
       <BackLink href="/setup?tab=campaigns">Setup</BackLink>
-      <PageHeader title={`Edit: ${c.name}`} />
-      <CampaignForm
-        defaults={defaults}
-        offers={(offers ?? []).map((o) => ({ id: o.id, name: o.name, caseStudies: o.case_studies.filter((x) => !x.deleted_at).map((x) => x.title) }))}
-        inboxes={inboxes ?? []}
+      <PageHeader
+        title={`Edit: ${c.name}`}
+        description="Change who to write to, where the leads come from and where the drafts go."
       />
+      <div className="py-6">
+        <CampaignForm
+          defaults={defaults}
+          offers={(offers ?? []).map((o) => ({
+            id: o.id,
+            name: o.name,
+            caseStudies: o.case_studies.filter((x) => !x.deleted_at).map((x) => x.title),
+          }))}
+          inboxes={inboxes ?? []}
+        />
+      </div>
     </>
   );
 }

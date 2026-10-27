@@ -13,7 +13,7 @@ export function AddSuppressionForm({ campaigns }: { campaigns: Campaign[] }) {
   const { state, onSubmit: action, pending } = useActionForm(addSuppression);
   const err = state.fieldErrors ?? {};
   return (
-    <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
+    <form onSubmit={action} className="space-y-3 rounded-xl border bg-card p-4 shadow-card" noValidate>
       <h2 className="font-medium">Add an email or domain</h2>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Type" name="kind" error={err.kind}>
@@ -42,7 +42,7 @@ export function UploadSuppressionForm({ campaigns }: { campaigns: Campaign[] }) 
   const { state, onSubmit: action, pending } = useActionForm(uploadSuppressionCsv);
   const err = state.fieldErrors ?? {};
   return (
-    <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
+    <form onSubmit={action} className="space-y-3 rounded-xl border bg-card p-4 shadow-card" noValidate>
       <h2 className="font-medium">Upload a CSV</h2>
       <p className="text-xs text-zinc-500">
         One column of emails/domains, or a header row with <code>email</code>, <code>domain</code> and optional <code>reason</code>. Max 2 MB / 20,000 rows. Bad rows are reported, never fatal.
