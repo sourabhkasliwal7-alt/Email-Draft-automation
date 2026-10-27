@@ -97,6 +97,9 @@ export function mockApolloPeople(): ApolloPerson[] {
   });
 }
 
+/** every reveal call the mock received, so tests can prove the request flags (no phone, no personal email, no waterfall) */
+export const mockRevealLog: { personId: string; flags: unknown }[] = [];
+
 export const mockApollo: ApolloAdapter = {
   async searchPeople(filters, page) {
     const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
@@ -118,7 +121,8 @@ export const mockApollo: ApolloAdapter = {
     return { org: { name, domain, industry: "saas", employeeCount: 80, country: "IN" }, usage: { units: { call: 1 } } };
   },
   /** Every 7th person has no revealable email, so the "no email" path is exercised. */
-  async revealEmail({ personId }) {
+  async revealEmail({ personId, flags }) {
+    mockRevealLog.push({ personId, flags });
     const n = Number(personId.replace(/\D/g, ""));
     const p = mockApolloPeople()[n];
     if (!p || n % 7 === 6 || !p.organization?.domain) return { email: null, usage: { units: { credit: 0 } } };
@@ -150,7 +154,7 @@ function sentences(text: string): string[] {
  */
 export const mockLlm: LlmAdapter = {
   async complete(req) {
-    const task = /\[task:(extract|draft|check)\]/.exec(`${req.system ?? ""}\n${req.prompt}`)?.[1];
+    const task = /\[task:(extract|draft|check|screen|facts|write|check_email)\]/.exec(`${req.system ?? ""}\n${req.prompt}`)?.[1];
     let text: string;
     if (task === "extract") {
       const items: { type: string; description: string; source_url: string; snippet: string }[] = [];
@@ -182,6 +186,59 @@ export const mockLlm: LlmAdapter = {
       const claims = [...req.prompt.matchAll(/^CLAIM \d+: (.+)$/gm)].map((m) => m[1]!);
       const flags = claims.filter((c) => !ev.some((e) => e.includes(c) || c.includes(e))).map((c) => `Claim not supported by evidence: ${c}`);
       text = JSON.stringify({ pass: flags.length === 0, flags });
+    } else if (task === "screen") {
+      const dom = /Company: .*\((\S+)\)/.exec(req.prompt)?.[1] ?? "";
+      const fit = dom.startsWith("nofit-") ? "no" : dom.startsWith("maybe-") ? "uncertain" : "yes";
+      text = JSON.stringify({ fit, business_type: "software agency", reason: fit === "yes" ? "builds software for operations teams" : "does not look like a software business" });
+    } else if (task === "facts") {
+      const facts: { type: string; statement: string; source_url: string; quote: string; date: null }[] = [];
+      let devRoles: string[] = [];
+      for (const m of req.prompt.matchAll(SOURCE_RE)) {
+        const [, , url, body] = m;
+        const clean = body!.replace(/<\/?data>/g, "");
+        for (const s of sentences(clean)) {
+          if (s.includes("?")) continue;
+          const l = s.toLowerCase();
+          const type = l.includes("hiring") ? "hiring" : l.includes("funding") || l.includes("raised") ? "funding" : l.includes("builds") || l.includes("helps") ? "service-detail" : null;
+          if (!type) continue;
+          const quote = s.split(/\s+/).slice(0, 25).join(" ");
+          facts.push({ type, statement: s, source_url: url!, quote, date: null });
+          if (type === "hiring" && /engineer|developer/i.test(s)) devRoles = ["Data Engineer"];
+        }
+      }
+      // invented facts, so the exact-quote check has something to reject
+      if (req.prompt.includes("[mock:hallucinate]")) facts.push({ type: "funding", statement: "Raised a big round", source_url: "https://invented.example.com/", quote: "raised five hundred million from a famous fund", date: null });
+      if (req.prompt.includes("Company: Apollo Co 7 ")) for (let i = 0; i < 4; i++) facts.push({ type: "award", statement: "Won an award", source_url: "https://invented.example.com/", quote: `won the best workplace award ${i} years in a row`, date: null });
+      text = JSON.stringify({ facts, business_type: "software agency", developer_roles_open: devRoles, best_fact_index: facts.findIndex((f) => f.type === "hiring") });
+    } else if (task === "write") {
+      const get = (k: string) => new RegExp(`^${k}: (.*)$`, "m").exec(req.prompt)?.[1]?.trim() ?? "";
+      const fact = /^FACT (\S+): (.*?) \| QUOTE: (.*)$/m.exec(req.prompt);
+      const first = get("FIRST_NAME");
+      const company = get("COMPANY");
+      // "Badwrite" companies get a bad first attempt (fixed on the rewrite); "Failwrite" ones never get fixed
+      const bad = company.includes("Badwrite") && (!req.prompt.includes("FIX THESE PROBLEMS") || company.includes("Failwrite"));
+      const lines = [
+        `Hi ${first},`,
+        "",
+        fact ? `I read this on your site: "${fact[3]}"` : "I have been reading about your company.",
+        "",
+        "How do you handle development work today when your own team is already at capacity?",
+        "",
+        "We work with small software teams that want extra delivery capacity without adding permanent headcount.",
+        get("TOOLS"),
+        get("WHITE_LABEL_LINE"),
+        "",
+        bad ? "Happy to share an example, you will love it!" : "Happy to share an example of how that works if it is useful.",
+        "",
+        get("SENDER_FIRST_NAME"),
+        "Nuance Infotech",
+      ];
+      text = JSON.stringify({ subject: `idea for ${company}`, body: lines.join("\n"), fact_ids_used: fact ? [fact[1]] : [] });
+    } else if (task === "check_email") {
+      const wl = /^WHITE_LABEL_LINE: (.*)$/m.exec(req.prompt)?.[1] ?? "";
+      const body = req.prompt.split("EMAIL BODY:")[1] ?? "";
+      const two = (ok: boolean) => (ok ? 2 : 0);
+      text = JSON.stringify({ scores: { one_true_detail: 2, process_question: two(body.includes("?")), tools_for_their_industry: 2, white_label_line: two(Boolean(wl) && body.includes(wl)), soft_ask: 2, human_tone: two(!body.includes("!")) }, problems: [] });
     } else {
       text = `[mock ${req.tier}] ${req.prompt.slice(0, 80)}`;
     }
@@ -190,13 +247,13 @@ export const mockLlm: LlmAdapter = {
 };
 
 // ---------------------------------------------------------------- gmail
-export function createMockGmail(): GmailAdapter & { drafts: Map<string, { to: string; subject: string; bodyText: string }> } {
-  const drafts = new Map<string, { to: string; subject: string; bodyText: string }>();
+export function createMockGmail(): GmailAdapter & { drafts: Map<string, { to: string; subject: string; bodyText: string; label?: string }> } {
+  const drafts = new Map<string, { to: string; subject: string; bodyText: string; label?: string }>();
   return {
     drafts,
     async createDraft(req) {
       const draftId = `mock-draft-${drafts.size + 1}-${Math.random().toString(36).slice(2, 7)}`;
-      drafts.set(draftId, { to: req.to, subject: req.subject, bodyText: req.bodyText });
+      drafts.set(draftId, { to: req.to, subject: req.subject, bodyText: req.bodyText, label: req.label });
       return { draftId, messageIdHeader: `<${draftId}@mock.invalid>` };
     },
     async listReplies() {

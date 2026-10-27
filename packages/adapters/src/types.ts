@@ -6,6 +6,8 @@ export interface Usage {
 export interface LlmRequest {
   /** cheap = extraction/checks, strong = drafting */
   tier: "cheap" | "strong";
+  /** optional model override (from the workflow settings); the adapter falls back to its tier default */
+  model?: string;
   system?: string;
   prompt: string;
   maxTokens?: number;
@@ -57,6 +59,13 @@ export interface ApolloFilters {
   employeeMax?: number | null;
   perPage?: number;
 }
+export interface ApolloRevealFlags {
+  revealPersonalEmails: false;
+  revealPhoneNumber: false;
+  waterfallEmail: false;
+  waterfallPhone: false;
+  webhookUrl: null;
+}
 export interface ApolloPerson {
   id: string;
   firstName: string;
@@ -70,7 +79,8 @@ export interface ApolloPerson {
 export interface ApolloAdapter {
   searchPeople(filters: ApolloFilters, page: number): Promise<{ people: ApolloPerson[]; page: number; totalPages: number; totalEntries: number; usage: Usage }>;
   getOrganization(domain: string): Promise<{ org: { name: string; domain: string; industry: string | null; employeeCount: number | null; country: string | null } | null; usage: Usage }>;
-  revealEmail(req: { personId: string }): Promise<{ email: string | null; usage: Usage }>;
+  /** flags must always be the "email only" set (no phone, no personal email, no waterfall): see REVEAL_FLAGS in core */
+  revealEmail(req: { personId: string; flags: ApolloRevealFlags }): Promise<{ email: string | null; usage: Usage }>;
 }
 
 export type VerifyStatus = "valid" | "invalid" | "risky" | "catch_all" | "unknown";
@@ -84,6 +94,8 @@ export interface GmailDraftRequest {
   subject: string;
   bodyText: string;
   bodyHtml?: string;
+  /** Gmail label put on the draft (created if missing) */
+  label?: string;
 }
 /** Draft creation and reply reading. Contains NO send capability by design. */
 export interface GmailAdapter {

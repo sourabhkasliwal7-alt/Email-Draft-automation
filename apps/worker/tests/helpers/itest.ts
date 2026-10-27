@@ -45,6 +45,7 @@ export async function cleanup(tag: string, storagePaths: string[] = []) {
 
     await q(`delete from public.replies where send_id in (select id from public.email_sends where draft_id in (select id from _d))`);
     await q(`delete from public.email_sends where draft_id in (select id from _d)`);
+    await q(`delete from public.credit_ledger where campaign_lead_id in (select id from _l) or contact_id in (select id from _k) or batch_id in (select id from public.pipeline_batches where campaign_id in (select id from _c))`);
     await q(`delete from public.send_approvals where draft_id in (select id from _d)`);
     await q(`delete from public.email_drafts where id in (select id from _d)`);
     await q(`delete from public.followups where campaign_lead_id in (select id from _l)`);

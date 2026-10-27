@@ -560,6 +560,82 @@ export type Database = {
           },
         ]
       }
+      credit_ledger: {
+        Row: {
+          apollo_person_id: string | null
+          batch_id: string | null
+          campaign_lead_id: string | null
+          contact_id: string
+          created_at: string
+          credits: number
+          error: string | null
+          finished_at: string | null
+          flags: Json
+          id: string
+          is_mock: boolean
+          provider: string
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          apollo_person_id?: string | null
+          batch_id?: string | null
+          campaign_lead_id?: string | null
+          contact_id: string
+          created_at?: string
+          credits?: number
+          error?: string | null
+          finished_at?: string | null
+          flags?: Json
+          id?: string
+          is_mock?: boolean
+          provider?: string
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          apollo_person_id?: string | null
+          batch_id?: string | null
+          campaign_lead_id?: string | null
+          contact_id?: string
+          created_at?: string
+          credits?: number
+          error?: string | null
+          finished_at?: string | null
+          flags?: Json
+          id?: string
+          is_mock?: boolean
+          provider?: string
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_ledger_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_ledger_campaign_lead_id_fkey"
+            columns: ["campaign_lead_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_ledger_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       enrichment_results: {
         Row: {
           contact_id: string

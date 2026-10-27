@@ -6,6 +6,7 @@ import { createAdapters } from "@outreach/adapters";
 import { createServiceClient, recordHeartbeat } from "@outreach/db";
 import { loadWorkerEnv } from "./env";
 import { startJobLoop } from "./jobs/runner";
+import { scheduleTick } from "./jobs/scheduler";
 import { startWorker } from "./worker";
 
 config({ path: join(process.cwd(), "../../.env") });
@@ -29,12 +30,16 @@ async function main() {
   });
   const adapters = createAdapters(process.env);
   const pool = process.env.DATABASE_URL?.startsWith("postgres") ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 }) : null;
-  const jobs = db && !process.argv.includes("--once") ? startJobLoop({ db, pg: pool, adapters, modes: adapters.modes, log: console.log, workerId: env.workerId }) : null;
+  const ctx = db ? { db, pg: pool, adapters, modes: adapters.modes, log: console.log, workerId: env.workerId } : null;
+  const jobs = ctx && !process.argv.includes("--once") ? startJobLoop(ctx) : null;
+  // daily schedule: checked once a minute (weekdays at the configured IST time, holidays skipped)
+  const scheduler = ctx && jobs ? setInterval(() => void scheduleTick(ctx).catch((e) => console.log(`schedule check failed: ${(e as Error).message}`)), 60_000) : null;
 
   const shutdown = () => {
     console.log("worker shutting down");
     worker.stop();
     jobs?.stop();
+    if (scheduler) clearInterval(scheduler);
     void pool?.end();
     process.exit(0);
   };

@@ -1,7 +1,7 @@
 import type { JobInfo, WorkerCtx } from "../ctx";
 import { RetryLater } from "../ctx";
 import { isSendingEnabled, leadEvent, loadLead, must } from "../pipeline/common";
-import { suppressionHalt } from "./lead";
+import { suppressionHalt } from "./suppression";
 
 export interface SendPayload {
   draftId: string;

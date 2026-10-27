@@ -2,11 +2,9 @@ import type { Json } from "@outreach/db";
 import { RetryLater, type JobInfo, type WorkerCtx } from "../ctx";
 import { refreshBatch } from "../pipeline/common";
 import { CapReachedError } from "../spend";
-import { gmailDraftJob } from "./gmail-draft";
 import { runImportJob } from "./import";
-import { leadPipelineJob } from "./lead";
 import { sendJob } from "./send";
-import { workflowStartJob } from "./workflow";
+import { workflowRunJob } from "./run";
 
 /**
  * Minimal database-backed job runner over the `jobs` table: claim with an atomic status flip, bounded retries with
@@ -22,9 +20,7 @@ type Handler = (ctx: WorkerCtx, payload: never, job: JobInfo) => Promise<unknown
 
 export const HANDLERS: Record<string, Handler> = {
   "import.run": (ctx, payload: Parameters<typeof runImportJob>[1]) => runImportJob(ctx.db, payload, ctx.log),
-  "workflow.start": workflowStartJob as Handler,
-  "lead.pipeline": leadPipelineJob as Handler,
-  "gmail.draft": gmailDraftJob as Handler,
+  "workflow.run": workflowRunJob as Handler,
   "send.run": sendJob as Handler,
 };
 
@@ -97,6 +93,10 @@ export async function runOneJob(ctx: WorkerCtx, only: JobFilter = {}): Promise<b
     if (cap && job.batch_id) {
       // a spend cap stops the whole batch with the reason shown in the UI
       await db.from("pipeline_batches").update({ status: "paused", pause_reason: "cap", paused_at: new Date().toISOString(), pause_detail: (e as CapReachedError).detail as Json }).eq("id", job.batch_id).eq("status", "running");
+    }
+    if (job.type === "workflow.run" && giveUp && !cap && job.batch_id) {
+      // the run itself crashed: pause it with the reason so it shows in the UI and can be continued
+      await db.from("pipeline_batches").update({ status: "paused", pause_reason: "manual", paused_at: new Date().toISOString(), pause_detail: { error: message } as Json }).eq("id", job.batch_id).eq("status", "running");
     }
     if (job.type === "import.run" && giveUp) {
       await db.from("import_batches").update({ status: "failed", error: message }).eq("id", (job.payload as unknown as { batchId: string }).batchId);
