@@ -1,94 +1,117 @@
-import type { DbClient, Json } from "@outreach/db";
-import { runImportJob, type ImportJobPayload } from "./import";
+import type { Json } from "@outreach/db";
+import { RetryLater, type JobInfo, type WorkerCtx } from "../ctx";
+import { refreshBatch } from "../pipeline/common";
+import { CapReachedError } from "../spend";
+import { gmailDraftJob } from "./gmail-draft";
+import { runImportJob } from "./import";
+import { leadPipelineJob } from "./lead";
+import { sendJob } from "./send";
+import { workflowStartJob } from "./workflow";
 
 /**
  * Minimal database-backed job runner over the `jobs` table: claim with an atomic status flip, bounded retries with
- * backoff, and recovery of jobs whose worker died mid-run. Phase 4 replaces the polling with pg-boss + Mastra
- * workflows but keeps the same table, idempotency keys and handler signatures.
+ * backoff, and recovery of jobs whose worker died mid-run. Handlers are idempotent (job_steps / unique keys).
  */
 export const MAX_ATTEMPTS = 3;
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
-type JobRow = { id: string; type: string; payload: Json; attempts: number };
-type Handler = (db: DbClient, payload: never, log: (m: string) => void) => Promise<unknown>;
+type JobRow = { id: string; type: string; payload: Json; attempts: number; batch_id: string | null };
+type Handler = (ctx: WorkerCtx, payload: never, job: JobInfo) => Promise<unknown>;
 
 export const HANDLERS: Record<string, Handler> = {
-  "import.run": (db, payload: ImportJobPayload, log) => runImportJob(db, payload, log),
+  "import.run": (ctx, payload: Parameters<typeof runImportJob>[1]) => runImportJob(ctx.db, payload, ctx.log),
+  "workflow.start": workflowStartJob as Handler,
+  "lead.pipeline": leadPipelineJob as Handler,
+  "gmail.draft": gmailDraftJob as Handler,
+  "send.run": sendJob as Handler,
 };
 
 /** Puts jobs back in the queue when the worker that held them stopped without finishing. */
-export async function recoverStaleJobs(db: DbClient, now = new Date()): Promise<number> {
+export async function recoverStaleJobs(ctx: WorkerCtx, now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - STALE_AFTER_MS).toISOString();
-  const { data } = await db.from("jobs").update({ status: "pending", locked_by: null, locked_at: null }).eq("status", "running").lt("locked_at", cutoff).select("id");
+  const { data } = await ctx.db.from("jobs").update({ status: "pending", locked_by: null, locked_at: null }).eq("status", "running").lt("locked_at", cutoff).select("id");
   return data?.length ?? 0;
 }
 
 /** Atomically claims the oldest due job, or returns null. Two workers can never claim the same job. */
-export async function claimJob(db: DbClient, workerId: string, now = new Date(), onlyKeyPrefix?: string): Promise<JobRow | null> {
-  let query = db
+export interface JobFilter {
+  /** only jobs whose idempotency key starts with this (used by tests so they never touch other jobs) */
+  keyPrefix?: string;
+  /** only jobs of these campaigns */
+  campaignIds?: string[];
+}
+
+export async function claimJob(ctx: WorkerCtx, now = new Date(), only: JobFilter = {}): Promise<JobRow | null> {
+  let query = ctx.db
     .from("jobs")
-    .select("id, type, payload, attempts")
+    .select("id, type, payload, attempts, batch_id")
     .eq("status", "pending")
     .lte("run_after", now.toISOString())
     .in("type", Object.keys(HANDLERS))
     .order("created_at")
     .limit(5);
-  if (onlyKeyPrefix) query = query.like("idempotency_key", `${onlyKeyPrefix}%`);
+  if (only.keyPrefix) query = query.like("idempotency_key", `${only.keyPrefix}%`);
+  if (only.campaignIds) query = query.in("campaign_id", only.campaignIds);
   const { data: candidates } = await query;
   for (const c of candidates ?? []) {
-    const { data } = await db
+    const { data } = await ctx.db
       .from("jobs")
-      .update({ status: "running", locked_by: workerId, locked_at: now.toISOString(), attempts: c.attempts + 1 })
+      .update({ status: "running", locked_by: ctx.workerId, locked_at: now.toISOString(), attempts: c.attempts + 1 })
       .eq("id", c.id)
       .eq("status", "pending")
-      .select("id, type, payload, attempts")
+      .select("id, type, payload, attempts, batch_id")
       .maybeSingle();
     if (data) return data;
   }
   return null;
 }
 
-export async function runOneJob(db: DbClient, workerId: string, log: (m: string) => void = console.log, onlyKeyPrefix?: string): Promise<boolean> {
-  const job = await claimJob(db, workerId, new Date(), onlyKeyPrefix);
+export async function runOneJob(ctx: WorkerCtx, only: JobFilter = {}): Promise<boolean> {
+  const job = await claimJob(ctx, new Date(), only);
   if (!job) return false;
+  const { db, log } = ctx;
   const handler = HANDLERS[job.type]!;
   try {
-    await handler(db, job.payload as never, log);
-    await db.from("jobs").update({ status: "completed", last_error: null, locked_by: null, locked_at: null }).eq("id", job.id);
+    const result = await handler(ctx, job.payload as never, { jobId: job.id, attempts: job.attempts });
+    await db.from("jobs").update({ status: "completed", last_error: null, locked_by: null, locked_at: null, result: (result ?? {}) as Json }).eq("id", job.id);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    if (e instanceof RetryLater) {
+      // not a failure: wait for the stated time and do not use up an attempt
+      await db.from("jobs").update({ status: "pending", locked_by: null, locked_at: null, attempts: Math.max(0, job.attempts - 1), run_after: e.runAfter.toISOString(), last_error: message }).eq("id", job.id);
+      return true;
+    }
     log(`job ${job.id} (${job.type}) failed on attempt ${job.attempts}: ${message}`);
-    const giveUp = job.attempts >= MAX_ATTEMPTS;
+    const cap = e instanceof CapReachedError;
+    const giveUp = cap || job.attempts >= MAX_ATTEMPTS;
     await db
       .from("jobs")
-      .update({
-        status: giveUp ? "failed" : "pending",
-        last_error: message,
-        locked_by: null,
-        locked_at: null,
-        run_after: new Date(Date.now() + 30_000 * job.attempts).toISOString(),
-      })
+      .update({ status: giveUp ? "failed" : "pending", last_error: message, locked_by: null, locked_at: null, run_after: new Date(Date.now() + 30_000 * job.attempts).toISOString() })
       .eq("id", job.id);
+    if (cap && job.batch_id) {
+      // a spend cap stops the whole batch with the reason shown in the UI
+      await db.from("pipeline_batches").update({ status: "paused", pause_reason: "cap", paused_at: new Date().toISOString(), pause_detail: (e as CapReachedError).detail as Json }).eq("id", job.batch_id).eq("status", "running");
+    }
     if (job.type === "import.run" && giveUp) {
-      const batchId = (job.payload as unknown as ImportJobPayload).batchId;
-      await db.from("import_batches").update({ status: "failed", error: message }).eq("id", batchId);
+      await db.from("import_batches").update({ status: "failed", error: message }).eq("id", (job.payload as unknown as { batchId: string }).batchId);
     }
   }
+  if (job.batch_id) await refreshBatch(db, job.batch_id).catch((err) => log(`refresh batch failed: ${(err as Error).message}`));
   return true;
 }
 
 /** Drains the queue, then waits. Returns a stop function. */
-export function startJobLoop(db: DbClient, workerId: string, log: (m: string) => void = console.log, idleMs = 2000) {
+export function startJobLoop(ctx: WorkerCtx, idleMs = 2000) {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const loop = async () => {
     try {
-      await recoverStaleJobs(db);
-      while (!stopped && (await runOneJob(db, workerId, log))) {
+      await recoverStaleJobs(ctx);
+      while (!stopped && (await runOneJob(ctx))) {
         /* keep draining */
       }
     } catch (e) {
-      log(`job loop error: ${(e as Error).message}`);
+      ctx.log(`job loop error: ${(e as Error).message}`);
     }
     if (!stopped) timer = setTimeout(loop, idleMs);
   };

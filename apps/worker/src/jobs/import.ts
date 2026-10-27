@@ -1,4 +1,4 @@
-import type { DbClient, Json, TablesUpdate } from "@outreach/db";
+import type { DbClient, Json, Tables, TablesUpdate } from "@outreach/db";
 import {
   KeyIndex,
   classifyRow,
@@ -12,6 +12,7 @@ import {
   type ImportTotals,
   type Mapping,
   type NormalizedRow,
+  type ParsedTable,
   type RowOutcome,
   type RowStatus,
   type SuppressionIndex,
@@ -224,17 +225,30 @@ export async function runImportJob(db: DbClient, payload: ImportJobPayload, log:
   const campaign = must(await db.from("campaigns").select("id, icp").eq("id", batch.campaign_id).single(), "load campaign");
   const requireEmail = (campaign.icp as { requireEmail?: boolean } | null)?.requireEmail !== false;
   const stored = batch.mapping as unknown as Mapping;
-  const mode = batch.mode as ImportMode;
-  const dryRun = batch.dry_run;
-
-  const prevTotals = (batch.totals ?? {}) as Record<string, unknown>;
-  const resume = prevTotals.current_run === payload.run && batch.status === "importing";
-  if (!resume) must(await db.from("import_rows").delete().eq("batch_id", batch.id).select("id"), "clear previous rows");
-
   const file = await db.storage.from("imports").download(batch.storage_path);
   if (file.error || !file.data) throw new Error(`Could not read the uploaded file: ${file.error?.message ?? "missing"}`);
   const bytes = new Uint8Array(await file.data.arrayBuffer());
   const table = await readTable({ name: batch.file_name, bytes }, { sheet: batch.sheet ?? undefined, firstRowIsHeader: stored.firstRowIsHeader });
+
+  return importTable(db, batch, { requireEmail, stored, run: payload.run }, table, log);
+}
+
+/** The shared import engine: normalise, validate, dedupe, suppression/DNC check and write. Used by CSV/XLSX files and by the Apollo pull. */
+export async function importTable(
+  db: DbClient,
+  batch: Tables<"import_batches">,
+  opts: { requireEmail: boolean; stored: Mapping; run: number },
+  table: ParsedTable,
+  log: (m: string) => void = () => {},
+): Promise<ImportTotals> {
+  if (!batch.campaign_id) throw new Error("This import has no campaign.");
+  const { requireEmail, stored, run } = opts;
+  const mode = batch.mode as ImportMode;
+  const dryRun = batch.dry_run;
+
+  const prevTotals = (batch.totals ?? {}) as Record<string, unknown>;
+  const resume = prevTotals.current_run === run && batch.status === "importing";
+  if (!resume) must(await db.from("import_rows").delete().eq("batch_id", batch.id).select("id"), "clear previous rows");
 
   const totals = emptyTotals();
   totals.total = table.rows.length;
@@ -255,7 +269,7 @@ export async function runImportJob(db: DbClient, payload: ImportJobPayload, log:
     }
   }
 
-  const base = { headers: table.headers, current_run: payload.run, sheet: table.sheet, encoding: table.encoding, delimiter: table.delimiter, parse_warnings: table.warnings, dry_run: dryRun };
+  const base = { headers: table.headers, current_run: run, sheet: table.sheet, encoding: table.encoding, delimiter: table.delimiter, parse_warnings: table.warnings, dry_run: dryRun };
   const progress = async (processed: number) =>
     must(await db.from("import_batches").update({ status: "importing", totals: asJson({ ...totals, ...base, processed, phase: "processing" }) }).eq("id", batch.id), "save progress");
   await progress(done.size);

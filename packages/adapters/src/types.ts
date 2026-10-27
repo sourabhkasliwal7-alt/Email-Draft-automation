@@ -47,13 +47,30 @@ export interface CrunchbaseAdapter {
   lookupOrganization(domain: string): Promise<{ org: CrunchbaseOrg | null; usage: Usage }>;
 }
 
+export interface ApolloFilters {
+  titles: string[];
+  seniorities: string[];
+  /** industry / keyword terms */
+  keywords: string[];
+  locations: string[];
+  employeeMin?: number | null;
+  employeeMax?: number | null;
+  perPage?: number;
+}
+export interface ApolloPerson {
+  id: string;
+  firstName: string;
+  lastName: string;
+  title: string | null;
+  linkedinUrl: string | null;
+  country: string | null;
+  organization: { name: string; domain: string | null; industry: string | null; employeeCount: number | null } | null;
+}
+/** Search never returns emails (like Apollo); revealEmail is a separate, credit-spending call made only after qualification. */
 export interface ApolloAdapter {
-  revealEmail(req: {
-    firstName: string;
-    lastName: string;
-    domain: string;
-    profileUrl?: string;
-  }): Promise<{ email: string | null; usage: Usage }>;
+  searchPeople(filters: ApolloFilters, page: number): Promise<{ people: ApolloPerson[]; page: number; totalPages: number; totalEntries: number; usage: Usage }>;
+  getOrganization(domain: string): Promise<{ org: { name: string; domain: string; industry: string | null; employeeCount: number | null; country: string | null } | null; usage: Usage }>;
+  revealEmail(req: { personId: string }): Promise<{ email: string | null; usage: Usage }>;
 }
 
 export type VerifyStatus = "valid" | "invalid" | "risky" | "catch_all" | "unknown";

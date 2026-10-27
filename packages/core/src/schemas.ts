@@ -53,6 +53,9 @@ export const icpSchema = z.object({
   keywordsInclude: z.array(z.string()).default([]),
   keywordsExclude: z.array(z.string()).default([]),
   requireEmail: z.boolean().default(true),
+  /** where "Start workflow" gets leads: Apollo search (needs APOLLO access) or leads already imported from CSV */
+  leadSource: z.enum(["csv", "apollo"]).default("csv"),
+  maxLeadsPerRun: z.number().int().min(1).max(500).default(25),
 });
 export type Icp = z.infer<typeof icpSchema>;
 
@@ -67,6 +70,8 @@ export const campaignSchema = z
     keywordsInclude: z.string().default(""),
     keywordsExclude: z.string().default(""),
     researchFirst: z.coerce.boolean().default(false),
+    leadSource: z.enum(["csv", "apollo"]).default("csv"),
+    maxLeadsPerRun: z.coerce.number({ error: "Max leads per run must be a number" }).int("Max leads per run must be a whole number").min(1, "Max leads per run must be at least 1").max(500, "Max leads per run is at most 500").default(25),
     targetRoles: z.string().default(""),
     regions: z.string().default(""),
     scoreDraftMin: percent("Draft threshold"),
@@ -105,7 +110,10 @@ export function campaignToRow(v: CampaignInput) {
     employeeMax: toNum(v.employeeMax),
     keywordsInclude: splitList(v.keywordsInclude),
     keywordsExclude: splitList(v.keywordsExclude),
-    requireEmail: !v.researchFirst,
+    // Apollo search never returns emails (they are revealed after qualification), so those campaigns are research-first.
+    requireEmail: !v.researchFirst && v.leadSource !== "apollo",
+    leadSource: v.leadSource,
+    maxLeadsPerRun: v.maxLeadsPerRun,
   };
   return {
     name: v.name,

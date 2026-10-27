@@ -3,7 +3,7 @@ import type { DbClient } from "@outreach/db";
 import type { Mapping } from "@outreach/importer";
 import { runImportJob } from "../src/jobs/import";
 import { claimJob, runOneJob } from "../src/jobs/runner";
-import { cleanup, hasIntegrationDb, newTag, serviceDb } from "./helpers/itest";
+import { cleanup, hasIntegrationDb, makeCtx, newTag, serviceDb } from "./helpers/itest";
 
 const enabled = hasIntegrationDb();
 if (!enabled) console.warn("[worker tests] DATABASE_URL / Supabase keys missing: import integration tests NOT run. Tracked in BLOCKERS.md.");
@@ -204,7 +204,7 @@ describe.skipIf(!enabled)("job runner", () => {
   it("two workers can never claim the same job", async () => {
     const key = `${tag}-claim`;
     await db.from("jobs").insert({ type: "import.run", idempotency_key: key, payload: { batchId: "00000000-0000-4000-8000-000000000000", run: 1 } });
-    const [a, b] = await Promise.all([claimJob(db, "w1", new Date(), tag), claimJob(db, "w2", new Date(), tag)]);
+    const [a, b] = await Promise.all([claimJob({ ...makeCtx("w1"), db }, new Date(), { keyPrefix: tag }), claimJob({ ...makeCtx("w2"), db }, new Date(), { keyPrefix: tag })]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     expect([a, b].find(Boolean)!.attempts).toBe(1);
     // put it back for the next test
@@ -232,14 +232,15 @@ describe.skipIf(!enabled)("job runner", () => {
     await db.from("jobs").insert({ type: "import.run", idempotency_key: `${tag}-ok`, payload: { batchId: batch!.id, run: 1 }, campaign_id: campaign });
     // drain whatever is queued (other tests' completed jobs are not pending), including ours
     let ran = 0;
-    while (await runOneJob(db, "itest-worker", () => {}, tag)) ran++;
+    const ctx = makeCtx();
+    while (await runOneJob(ctx, { keyPrefix: tag })) ran++;
     expect(ran).toBe(1);
     expect((await db.from("jobs").select("status").eq("idempotency_key", `${tag}-ok`).single()).data!.status).toBe("completed");
     expect((await db.from("import_batches").select("status").eq("id", batch!.id).single()).data!.status).toBe("completed");
 
     // failing job: attempts count up, it goes back to pending with a delay, and fails for good on the last attempt
     await db.from("jobs").insert({ type: "import.run", idempotency_key: `${tag}-bad`, payload: { batchId: "00000000-0000-4000-8000-000000000001", run: 1 }, attempts: 2 });
-    await runOneJob(db, "itest-worker", () => {}, tag);
+    await runOneJob(makeCtx(), { keyPrefix: tag });
     const bad = (await db.from("jobs").select("status, attempts, last_error").eq("idempotency_key", `${tag}-bad`).single()).data!;
     expect(bad).toMatchObject({ status: "failed", attempts: 3 });
     expect(bad.last_error).toMatch(/load batch/);

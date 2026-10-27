@@ -1,6 +1,8 @@
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { config } from "dotenv";
+import pg from "pg";
+import { createAdapters } from "@outreach/adapters";
 import { createServiceClient, recordHeartbeat } from "@outreach/db";
 import { loadWorkerEnv } from "./env";
 import { startJobLoop } from "./jobs/runner";
@@ -25,12 +27,15 @@ async function main() {
       else console.log(`heartbeat (no database configured) ${new Date().toISOString()}`);
     },
   });
-  const jobs = db && !process.argv.includes("--once") ? startJobLoop(db, env.workerId) : null;
+  const adapters = createAdapters(process.env);
+  const pool = process.env.DATABASE_URL?.startsWith("postgres") ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 }) : null;
+  const jobs = db && !process.argv.includes("--once") ? startJobLoop({ db, pg: pool, adapters, modes: adapters.modes, log: console.log, workerId: env.workerId }) : null;
 
   const shutdown = () => {
     console.log("worker shutting down");
     worker.stop();
     jobs?.stop();
+    void pool?.end();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
