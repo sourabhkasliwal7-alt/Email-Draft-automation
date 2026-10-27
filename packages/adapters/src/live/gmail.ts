@@ -1,5 +1,5 @@
 import type { GmailAdapter } from "../types";
-import { GoogleAuthError, GMAIL_LABELS_SCOPE, refreshAccessToken } from "./google";
+import { GoogleAuthError, GMAIL_MODIFY_SCOPE, refreshAccessToken } from "./google";
 import { HttpError, requestJson, type FetchLike } from "./http";
 import { decryptToken } from "./token-crypto";
 
@@ -171,7 +171,7 @@ export function createLiveGmail(opts: LiveGmailOptions): GmailAdapter {
       let labelApplied = false;
       let labelNote: string | undefined;
       if (req.label) {
-        if (labelApplyRefused.has(req.inboxId)) labelNote = `label "${req.label}" not applied: Google only allows that with the gmail.modify permission`;
+        if (labelApplyRefused.has(req.inboxId)) labelNote = `label "${req.label}" not applied: Google refused it earlier for this mailbox (reconnect it on the Setup page)`;
         else {
           try {
             const id = await ensureLabel(req.inboxId, rec, req.label);
@@ -182,15 +182,16 @@ export function createLiveGmail(opts: LiveGmailOptions): GmailAdapter {
             if (e instanceof MailboxNeedsReconnectError) throw e;
             if (e instanceof HttpError && (e.status === 403 || e.status === 401)) {
               labelApplyRefused.add(req.inboxId);
-              const hasLabelScope = rec.scopes.includes(GMAIL_LABELS_SCOPE);
-              labelNote = `label "${req.label}" ${hasLabelScope ? "exists in Gmail but " : ""}could not be put on the draft: Google only allows that with the gmail.modify permission, which was not requested`;
+              labelNote = rec.scopes.includes(GMAIL_MODIFY_SCOPE)
+                ? `label "${req.label}" could not be put on the draft: Google refused it`
+                : `label "${req.label}" could not be put on the draft: this mailbox was connected before the label permission (gmail.modify) was added: reconnect it on the Setup page`;
             } else {
               labelNote = `label "${req.label}" not applied: ${(e as Error).message.slice(0, 160)}`;
             }
           }
         }
       }
-      return { draftId: draft.id, messageIdHeader, labelApplied, labelNote };
+      return { draftId: draft.id, messageIdHeader, messageId: draft.message?.id, labelApplied, labelNote };
     },
 
     async listReplies() {

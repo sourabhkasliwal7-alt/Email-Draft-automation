@@ -32,7 +32,9 @@ export function computeCostUsd(
   let total = 0;
   for (const [unit, qty] of Object.entries(units)) {
     if (qty === 0) continue;
-    const p = findPrice(prices, provider, unit, at);
+    // A unit can name its model ("input_token@anthropic/claude-haiku-5.5") so two models with different prices are costed
+    // correctly; without a row for that exact unit the plain unit ("input_token") is used.
+    const p = findPrice(prices, provider, unit, at) ?? (unit.includes("@") ? findPrice(prices, provider, unit.slice(0, unit.indexOf("@")), at) : undefined);
     if (!p) throw new MissingPriceError(provider, unit);
     total += qty * p.usdPerUnit;
   }

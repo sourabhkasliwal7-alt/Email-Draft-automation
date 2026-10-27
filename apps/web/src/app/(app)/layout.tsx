@@ -4,15 +4,10 @@ import { Nav, type NavItem } from "@/components/nav";
 import { requireUser } from "@/lib/auth";
 
 const NAV: (NavItem & { permission: Permission })[] = [
-  { href: "/", label: "Dashboard", permission: "dashboard.view" },
-  { href: "/runs", label: "Runs", permission: "run.view" },
-  { href: "/attention", label: "Needs attention", permission: "attention.view" },
-  { href: "/campaigns", label: "Campaigns", permission: "campaign.view" },
-  { href: "/import", label: "Import", permission: "import.use" },
-  { href: "/suppression", label: "Suppression", permission: "suppression.view" },
-  { href: "/inboxes", label: "Mailboxes", permission: "inbox.view" },
-  { href: "/offers", label: "Offers", permission: "offer.view" },
-  { href: "/settings", label: "Settings", permission: "settings.view" },
+  { href: "/", label: "Home", permission: "dashboard.view" },
+  { href: "/leads", label: "Leads", permission: "lead.view" },
+  { href: "/drafts", label: "Drafts", permission: "drafts.view" },
+  { href: "/setup", label: "Setup", permission: "setup.view" },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {

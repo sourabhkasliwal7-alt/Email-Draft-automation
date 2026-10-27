@@ -50,7 +50,7 @@ export async function createImport(_prev: ActionState, formData: FormData): Prom
   const { error: pathError } = await guard.supabase.from("import_batches").update({ storage_path: path }).eq("id", batch.id);
   if (pathError) return { ok: false, message: dbErrorMessage(pathError) };
 
-  revalidatePath("/import");
+  revalidatePath("/leads");
   redirect(`/import/${batch.id}`);
 }
 
@@ -123,7 +123,7 @@ export async function startImport(_prev: ActionState, formData: FormData): Promi
   });
   if (jobError) return { ok: false, message: dbErrorMessage(jobError) };
 
-  revalidatePath("/import");
+  revalidatePath("/leads");
   redirect(`/import/${batch.id}`);
 }
 
@@ -132,7 +132,7 @@ export async function deleteTemplate(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await guard.supabase.from("import_templates").delete().eq("id", id);
-  revalidatePath("/import");
+  revalidatePath("/leads");
 }
 
 /** Lets the user abandon a batch that is stuck waiting for a worker. */

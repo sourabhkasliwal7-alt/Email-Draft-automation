@@ -15,7 +15,7 @@ export async function addSuppression(_prev: ActionState, formData: FormData): Pr
   if (!v.ok) return v.state;
   const { error } = await guard.supabase.from("suppression").insert(suppressionToRow(v.data));
   if (error) return { ok: false, message: error.code === "23505" ? "That entry is already on the list." : dbErrorMessage(error) };
-  revalidatePath("/suppression");
+  revalidatePath("/setup");
   return { ok: true, message: "Added to the suppression list." };
 }
 
@@ -24,7 +24,7 @@ export async function removeSuppression(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await guard.supabase.from("suppression").delete().eq("id", id);
-  revalidatePath("/suppression");
+  revalidatePath("/setup");
 }
 
 export async function uploadSuppressionCsv(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -70,7 +70,7 @@ export async function uploadSuppressionCsv(_prev: ActionState, formData: FormDat
     }
   }
 
-  revalidatePath("/suppression");
+  revalidatePath("/setup");
   const parts = [`Added ${added}`];
   if (alreadyListed) parts.push(`${alreadyListed} already on the list`);
   if (parsed.duplicatesInFile) parts.push(`${parsed.duplicatesInFile} duplicate rows in the file`);

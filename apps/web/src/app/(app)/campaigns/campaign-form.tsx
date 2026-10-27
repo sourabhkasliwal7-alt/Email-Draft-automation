@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Checkbox, Field, FormMessage, SelectInput, SubmitButton, TextArea, TextInput, useActionForm } from "@/components/form";
-import { Button } from "@/components/ui/button";
 import { saveCampaign } from "./actions";
 
 export interface CampaignDefaults {
@@ -17,6 +16,9 @@ export interface CampaignDefaults {
   keywordsExclude: string;
   researchFirst: boolean;
   leadSource: string;
+  seniorities: string;
+  hiringTitles: string;
+  minOpenJobs: string;
   targetRoles: string;
   regions: string;
   scoreDraftMin: number;
@@ -43,7 +45,10 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
   keywordsInclude: "",
   keywordsExclude: "",
   researchFirst: false,
-  leadSource: "apollo",
+  leadSource: "csv",
+  seniorities: "",
+  hiringTitles: "",
+  minOpenJobs: "",
   targetRoles: "",
   regions: "",
   scoreDraftMin: 70,
@@ -57,192 +62,213 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
   sendDays: [1, 2, 3, 4, 5],
   sendStart: "10:00",
   sendEnd: "17:00",
-  status: "draft",
+  status: "active",
 };
 
-const STEPS = ["Audience (ICP)", "Roles & scoring", "Offer & message", "Sending"] as const;
-/** which step each field lives on, so validation errors can jump to the right page */
-const FIELD_STEP: Record<string, number> = {
-  name: 0, industries: 0, excludeIndustries: 0, countries: 0, employeeMin: 0, employeeMax: 0, keywordsInclude: 0, keywordsExclude: 0, researchFirst: 0, leadSource: 0,
-  targetRoles: 1, regions: 1, scoreDraftMin: 1, scoreReviewMin: 1, dailyCap: 1,
-  offerId: 2, tone: 2, cta: 2,
-  inboxId: 3, researchDepth: 3, sendDays: 3, sendStart: 3, sendEnd: 3, status: 3,
+/** Apollo's seniority levels, in plain words. */
+const SENIORITIES: [string, string][] = [
+  ["owner", "Owner"],
+  ["founder", "Founder"],
+  ["c_suite", "C-level (CEO, COO, CTO ...)"],
+  ["partner", "Partner"],
+  ["vp", "VP"],
+  ["head", "Head of"],
+  ["director", "Director"],
+  ["manager", "Manager"],
+  ["senior", "Senior"],
+];
+
+const SOURCE_HINT: Record<string, string> = {
+  csv: "Each run works the leads you upload on the Leads page.",
+  apollo: "Each run asks Apollo for people who match the target below (the search is free). Email addresses are unlocked later, only for leads that pass the checks.",
+  both: "Each run works your uploaded leads first, then asks Apollo for more to reach the day's number.",
 };
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** One page, five blocks. The scoring and send-window settings that no longer have a screen are kept as hidden values so nothing changes silently. */
 export function CampaignForm({
   defaults,
   offers,
   inboxes,
 }: {
   defaults: CampaignDefaults;
-  offers: { id: string; name: string }[];
+  offers: { id: string; name: string; caseStudies: string[] }[];
   inboxes: { id: string; email: string }[];
 }) {
   const { state, onSubmit: action, pending } = useActionForm(saveCampaign);
-  const [step, setStep] = useState(0);
-  const [seenState, setSeenState] = useState(state);
-
-  // When the server returns field errors, jump to the earliest step that has one (state-derived, no effect needed).
-  if (state !== seenState) {
-    setSeenState(state);
-    const steps = Object.keys(state.fieldErrors ?? {}).map((k) => FIELD_STEP[k] ?? 0);
-    if (steps.length) setStep(Math.min(...steps));
-  }
-
+  const [source, setSource] = useState(defaults.leadSource);
+  const [offerId, setOfferId] = useState(defaults.offerId);
+  const [seniority, setSeniority] = useState<string[]>(defaults.seniorities.split(",").map((s) => s.trim()).filter(Boolean));
   const err = state.fieldErrors ?? {};
-  const show = (i: number) => (step === i ? "space-y-4" : "hidden");
-  const errorSteps = new Set(Object.keys(err).map((k) => FIELD_STEP[k] ?? 0));
+  const usesApollo = source === "apollo" || source === "both";
+  const studies = offers.find((o) => o.id === offerId)?.caseStudies ?? [];
 
   return (
-    <form
-      onSubmit={action}
-      onKeyDown={(e) => {
-        // Enter in a text field would submit the whole wizard from step 1; only the last step may submit.
-        if (e.key === "Enter" && step < STEPS.length - 1 && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault();
-      }}
-      className="max-w-2xl space-y-6"
-      noValidate
-    >
+    <form onSubmit={action} className="max-w-3xl space-y-8" noValidate data-testid="campaign-form">
       {defaults.id && <input type="hidden" name="id" value={defaults.id} />}
+      {/* kept as they are: scoring, depth and send window have no screen in the simple setup */}
+      <input type="hidden" name="regions" value={defaults.regions} />
+      <input type="hidden" name="scoreDraftMin" value={defaults.scoreDraftMin} />
+      <input type="hidden" name="scoreReviewMin" value={defaults.scoreReviewMin} />
+      <input type="hidden" name="researchDepth" value={defaults.researchDepth} />
+      <input type="hidden" name="sendStart" value={defaults.sendStart} />
+      <input type="hidden" name="sendEnd" value={defaults.sendEnd} />
+      {defaults.sendDays.map((d) => (
+        <input key={d} type="hidden" name="sendDays" value={d} />
+      ))}
+      <input type="hidden" name="seniorities" value={seniority.join(", ")} />
 
-      <ol className="flex flex-wrap gap-2" aria-label="Steps">
-        {STEPS.map((label, i) => (
-          <li key={label}>
-            <button
-              type="button"
-              onClick={() => setStep(i)}
-              aria-current={step === i ? "step" : undefined}
-              className={`rounded-full border px-3 py-1 text-sm ${step === i ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : ""} ${errorSteps.has(i) ? "border-red-500 text-red-700" : ""}`}
-            >
-              {i + 1}. {label}
-            </button>
-          </li>
-        ))}
-      </ol>
-
-      <section className={show(0)}>
+      <section className="space-y-4" data-testid="block-source">
+        <h2 className="text-lg font-semibold">1. Name and where the leads come from</h2>
         <Field label="Campaign name" name="name" error={err.name}>
           <TextInput name="name" defaultValue={defaults.name} />
         </Field>
-        <Field label="Lead source" name="leadSource" error={err.leadSource} hint="Apollo: each run searches for people (free). CSV: each run works the leads you imported.">
-          <SelectInput name="leadSource" defaultValue={defaults.leadSource} options={[{ value: "apollo", label: "Apollo search" }, { value: "csv", label: "CSV import" }]} />
+        <Field label="Leads come from" name="leadSource" error={err.leadSource} hint={SOURCE_HINT[source]}>
+          <select
+            id="leadSource"
+            name="leadSource"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <option value="csv">CSV file</option>
+            <option value="apollo">Apollo</option>
+            <option value="both">Both: CSV file first, then Apollo</option>
+          </select>
         </Field>
-        <Field label="Target industries" name="industries" error={err.industries} hint="Comma or line separated, e.g. saas, logistics">
+        {source !== "apollo" && <Checkbox name="researchFirst" label="My CSV file has no email column (emails are found with Apollo later)" defaultChecked={defaults.researchFirst} />}
+      </section>
+
+      <section className="space-y-4" data-testid="block-target">
+        <h2 className="text-lg font-semibold">2. Who to write to</h2>
+        <Field label="Job titles" name="targetRoles" error={err.targetRoles} hint="For example: COO, Head of Operations">
+          <TextArea name="targetRoles" rows={2} defaultValue={defaults.targetRoles} />
+        </Field>
+        <Field label="Industries" name="industries" error={err.industries} hint="Comma or line separated, for example: saas, logistics">
           <TextArea name="industries" rows={2} defaultValue={defaults.industries} />
         </Field>
-        <Field label="Exclude industries" name="excludeIndustries" error={err.excludeIndustries}>
-          <TextArea name="excludeIndustries" rows={2} defaultValue={defaults.excludeIndustries} />
-        </Field>
-        <Field label="Countries" name="countries" error={err.countries} hint="ISO codes or names, e.g. IN, US">
+        <Field label="Countries" name="countries" error={err.countries} hint="For example: IN, US">
           <TextInput name="countries" defaultValue={defaults.countries} />
         </Field>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Min employees" name="employeeMin" error={err.employeeMin}>
+          <Field label="Smallest company (employees)" name="employeeMin" error={err.employeeMin}>
             <TextInput name="employeeMin" defaultValue={defaults.employeeMin} />
           </Field>
-          <Field label="Max employees" name="employeeMax" error={err.employeeMax}>
+          <Field label="Largest company (employees)" name="employeeMax" error={err.employeeMax}>
             <TextInput name="employeeMax" defaultValue={defaults.employeeMax} />
           </Field>
         </div>
-        <Field label="Keywords that must appear" name="keywordsInclude" error={err.keywordsInclude}>
-          <TextInput name="keywordsInclude" defaultValue={defaults.keywordsInclude} />
-        </Field>
-        <Field label="Keywords that disqualify" name="keywordsExclude" error={err.keywordsExclude}>
-          <TextInput name="keywordsExclude" defaultValue={defaults.keywordsExclude} />
-        </Field>
-        <Checkbox name="researchFirst" label="Research-first: allow leads without an email (email is revealed after qualification)" defaultChecked={defaults.researchFirst} />
+        <details className="text-sm">
+          <summary className="cursor-pointer font-medium">More ways to narrow it down (optional)</summary>
+          <div className="mt-3 space-y-4">
+            <Field label="Industries to leave out" name="excludeIndustries" error={err.excludeIndustries}>
+              <TextArea name="excludeIndustries" rows={2} defaultValue={defaults.excludeIndustries} />
+            </Field>
+            <Field label="Words the company should mention" name="keywordsInclude" error={err.keywordsInclude}>
+              <TextInput name="keywordsInclude" defaultValue={defaults.keywordsInclude} />
+            </Field>
+            <Field label="Words that rule a company out" name="keywordsExclude" error={err.keywordsExclude}>
+              <TextInput name="keywordsExclude" defaultValue={defaults.keywordsExclude} />
+            </Field>
+          </div>
+        </details>
       </section>
 
-      <section className={show(1)}>
-        <Field label="Target roles" name="targetRoles" error={err.targetRoles} hint="e.g. COO, Head of Operations">
-          <TextArea name="targetRoles" rows={2} defaultValue={defaults.targetRoles} />
-        </Field>
-        <Field label="Regions" name="regions" error={err.regions}>
-          <TextInput name="regions" defaultValue={defaults.regions} />
-        </Field>
-        <div className="grid grid-cols-3 gap-4">
-          <Field label="Draft threshold (0-100)" name="scoreDraftMin" error={err.scoreDraftMin} hint="Score at or above this gets a draft">
-            <TextInput name="scoreDraftMin" defaultValue={defaults.scoreDraftMin} />
-          </Field>
-          <Field label="Review threshold (0-100)" name="scoreReviewMin" error={err.scoreReviewMin} hint="Between the two: held for review">
-            <TextInput name="scoreReviewMin" defaultValue={defaults.scoreReviewMin} />
-          </Field>
-          <Field label="Daily draft cap" name="dailyCap" error={err.dailyCap}>
-            <TextInput name="dailyCap" defaultValue={defaults.dailyCap} />
-          </Field>
-        </div>
-      </section>
-
-      <section className={show(2)}>
-        <Field label="Offer" name="offerId" error={err.offerId}>
-          <SelectInput name="offerId" defaultValue={defaults.offerId} options={[{ value: "", label: "No offer selected" }, ...offers.map((o) => ({ value: o.id, label: o.name }))]} />
-        </Field>
-        <Field label="Tone" name="tone" error={err.tone} hint="e.g. plain, specific, short">
-          <TextInput name="tone" defaultValue={defaults.tone} />
-        </Field>
-        <Field label="Call to action" name="cta" error={err.cta}>
-          <TextInput name="cta" defaultValue={defaults.cta} />
-        </Field>
-      </section>
-
-      <section className={show(3)}>
-        <Field label="Sender inbox" name="inboxId" error={err.inboxId}>
-          <SelectInput name="inboxId" defaultValue={defaults.inboxId} options={[{ value: "", label: "No inbox selected" }, ...inboxes.map((i) => ({ value: i.id, label: i.email }))]} />
-        </Field>
-        <Field label="Research depth" name="researchDepth" error={err.researchDepth}>
-          <SelectInput
-            name="researchDepth"
-            defaultValue={defaults.researchDepth}
-            options={[
-              { value: "light", label: "Light" },
-              { value: "standard", label: "Standard" },
-              { value: "deep", label: "Deep" },
-            ]}
-          />
-        </Field>
-        <fieldset className="space-y-2" data-field="sendDays">
-          <legend className="text-sm font-medium">Send days (Asia/Kolkata)</legend>
-          <div className="flex flex-wrap gap-3">
-            {DAYS.map((d, i) => (
-              <Checkbox key={d} name="sendDays" value={String(i)} label={d} defaultChecked={defaults.sendDays.includes(i)} />
+      <section className={`space-y-4 ${usesApollo ? "" : "opacity-60"}`} data-testid="block-apollo">
+        <h2 className="text-lg font-semibold">3. Apollo search filters</h2>
+        <p className="text-xs text-zinc-600">
+          {usesApollo ? "Used when Apollo looks for people." : "Not used: this campaign does not use Apollo."} Job titles, industries, countries and company size come from the target above. Leave a field here blank to use only that.
+        </p>
+        <fieldset className="space-y-2" data-field="seniorities">
+          <legend className="text-sm font-medium">Seniority</legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-2" data-testid="seniority-options">
+            {SENIORITIES.map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={seniority.includes(value)}
+                  onChange={(e) => setSeniority(e.target.checked ? [...seniority, value] : seniority.filter((s) => s !== value))}
+                  aria-label={label}
+                  className="size-4 rounded border-zinc-300"
+                />
+                {label}
+              </label>
             ))}
           </div>
-          {err.sendDays && <p role="alert" className="text-xs font-medium text-red-600">{err.sendDays}</p>}
         </fieldset>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Window start" name="sendStart" error={err.sendStart}>
-            <TextInput name="sendStart" defaultValue={defaults.sendStart} placeholder="10:00" />
+          <Field label="Companies hiring for" name="hiringTitles" error={err.hiringTitles} hint="Job titles in their open jobs, for example: developer, data engineer">
+            <TextInput name="hiringTitles" defaultValue={defaults.hiringTitles} />
           </Field>
-          <Field label="Window end" name="sendEnd" error={err.sendEnd}>
-            <TextInput name="sendEnd" defaultValue={defaults.sendEnd} placeholder="17:00" />
+          <Field label="At least this many open jobs" name="minOpenJobs" error={err.minOpenJobs}>
+            <TextInput name="minOpenJobs" defaultValue={defaults.minOpenJobs} />
           </Field>
         </div>
-        <Field label="Status" name="status" error={err.status}>
-          <SelectInput
-            name="status"
-            defaultValue={defaults.status}
-            options={["draft", "active", "paused", "completed"].map((s) => ({ value: s, label: s }))}
-          />
+        <p className="text-xs text-zinc-500">The hiring filters only work if your Apollo plan allows them. If it does not, Apollo ignores or refuses them and the run says so.</p>
+      </section>
+
+      <section className="space-y-4" data-testid="block-offer">
+        <h2 className="text-lg font-semibold">4. What you offer</h2>
+        <Field label="Offer" name="offerId" error={err.offerId}>
+          <select
+            id="offerId"
+            name="offerId"
+            value={offerId}
+            onChange={(e) => setOfferId(e.target.value)}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <option value="">No offer chosen</option>
+            {offers.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
         </Field>
+        <p className="text-xs text-zinc-600" data-testid="offer-case-studies">
+          {offerId ? (studies.length ? `Case studies the emails may quote: ${studies.join(", ")}.` : "This offer has no case study yet.") : "Choose an offer to see its case studies."}{" "}
+          {offerId && (
+            <a href={`/offers/${offerId}`} target="_blank" rel="noreferrer" className="underline">
+              Add or edit case studies
+            </a>
+          )}
+        </p>
+        <details className="text-sm">
+          <summary className="cursor-pointer font-medium">Tone and call to action (optional)</summary>
+          <div className="mt-3 space-y-4">
+            <Field label="Tone" name="tone" error={err.tone} hint="For example: plain, specific, short">
+              <TextInput name="tone" defaultValue={defaults.tone} />
+            </Field>
+            <Field label="Call to action" name="cta" error={err.cta}>
+              <TextInput name="cta" defaultValue={defaults.cta} />
+            </Field>
+          </div>
+        </details>
+      </section>
+
+      <section className="space-y-4" data-testid="block-mailbox">
+        <h2 className="text-lg font-semibold">5. Where the drafts go</h2>
+        <Field label="Gmail mailbox" name="inboxId" error={err.inboxId} hint="The drafts are saved here. Add and connect mailboxes in Setup.">
+          <SelectInput name="inboxId" defaultValue={defaults.inboxId} options={[{ value: "", label: "No mailbox chosen" }, ...inboxes.map((i) => ({ value: i.id, label: i.email }))]} />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Drafts per day (at most)" name="dailyCap" error={err.dailyCap}>
+            <TextInput name="dailyCap" defaultValue={defaults.dailyCap} />
+          </Field>
+          <Field label="Status" name="status" error={err.status} hint="Only an Active campaign runs by itself on the schedule.">
+            <SelectInput
+              name="status"
+              defaultValue={["paused", "draft", "completed"].includes(defaults.status) ? defaults.status : "active"}
+              options={[
+                { value: "active", label: "Active" },
+                { value: "paused", label: "Paused" },
+                { value: "draft", label: "Draft (not ready)" },
+                ...(defaults.status === "completed" ? [{ value: "completed", label: "Finished" }] : []),
+              ]}
+            />
+          </Field>
+        </div>
       </section>
 
       <FormMessage state={state} />
-      <div className="flex gap-3">
-        {step > 0 && (
-          <Button type="button" variant="outline" onClick={() => setStep(step - 1)}>
-            Back
-          </Button>
-        )}
-        {step < STEPS.length - 1 && (
-          <Button type="button" onClick={() => setStep(step + 1)}>
-            Next
-          </Button>
-        )}
-        {/* Always rendered so every step's fields are submitted; it is only focusable on the last step. */}
-        <span className={step === STEPS.length - 1 ? "" : "hidden"}>
-          <SubmitButton pending={pending}>{defaults.id ? "Save campaign" : "Create campaign"}</SubmitButton>
-        </span>
-      </div>
+      <SubmitButton pending={pending}>{defaults.id ? "Save campaign" : "Create campaign"}</SubmitButton>
     </form>
   );
 }

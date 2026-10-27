@@ -86,10 +86,10 @@ export function SelectInput({
   );
 }
 
-export function Checkbox({ name, label, defaultChecked, value }: { name: string; label: string; defaultChecked?: boolean; value?: string }) {
+export function Checkbox({ name, label, defaultChecked, value, disabled }: { name: string; label: string; defaultChecked?: boolean; value?: string; disabled?: boolean }) {
   return (
     <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" name={name} value={value} defaultChecked={defaultChecked} className="size-4 rounded border-zinc-300" />
+      <input type="checkbox" name={name} value={value} defaultChecked={defaultChecked} disabled={disabled} className="size-4 rounded border-zinc-300" />
       {label}
     </label>
   );

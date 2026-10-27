@@ -1,5 +1,5 @@
 import type { AdapterName, Usage } from "@outreach/adapters";
-import { MissingPriceError, PROVIDER_FOR_ADAPTER, computeCostUsd, usageKey, type PipelineAdapterName, type PriceRow } from "@outreach/core";
+import { MissingPriceError, computeCostUsd, providerIdFor, usageKey, type PipelineAdapterName, type PriceRow } from "@outreach/core";
 import type { WorkerCtx } from "./ctx";
 
 export class CapReachedError extends Error {
@@ -13,7 +13,7 @@ export class CapReachedError extends Error {
  * Reservation sizes for the cap check ONLY (what we hold back before a live call). The recorded cost is always
  * usage x price_table; these numbers never appear in reports.
  */
-const RESERVE_USD: Record<string, number> = { anthropic: 0.05, serper: 0.002, apollo: 0.1, verifier: 0.01, crunchbase: 0.05, fetcher: 0 };
+const RESERVE_USD: Record<string, number> = { anthropic: 0.05, openrouter: 0.05, serper: 0.002, apollo: 0.1, verifier: 0.01, crunchbase: 0.05, fetcher: 0 };
 
 async function loadPrices(ctx: WorkerCtx): Promise<PriceRow[]> {
   const { data, error } = await ctx.db.from("price_table").select("provider, unit, usd_per_unit, effective_from");
@@ -38,9 +38,12 @@ export function makeSpender(ctx: WorkerCtx, scope: SpendScope) {
   let seq = 0;
   let prices: PriceRow[] | null = null;
   return async function paid<T extends { usage: Usage }>(adapter: PipelineAdapterName & AdapterName, operation: string, call: () => Promise<T>): Promise<T> {
-    const provider = PROVIDER_FOR_ADAPTER[adapter];
+    // the language model is recorded under the provider LLM_PROVIDER selects (anthropic or openrouter)
+    const provider = providerIdFor(adapter, ctx.llmProvider);
     const mock = ctx.modes[adapter] === "mock";
-    const idem = usageKey(scope.jobId, scope.step, provider, operation, seq++);
+    // The key names the lead: without it every lead in a run shared one key (job + step + provider + operation + 0), so only the
+    // first lead got a usage row, the cap check was skipped for the others and their usage overwrote it.
+    const idem = usageKey(scope.jobId, scope.leadId ? `${scope.step}:${scope.leadId}` : scope.step, provider, operation, seq++);
     const reserve = mock ? 0 : (RESERVE_USD[provider] ?? 0);
 
     if (!mock) {

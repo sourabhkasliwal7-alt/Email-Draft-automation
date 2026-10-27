@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { icpSchema } from "@outreach/core";
+import { BackLink } from "@/components/bits";
 import { PageHeader } from "@/components/page-header";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -11,7 +12,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   const supabase = await createClient();
   const [{ data: c }, { data: offers }, { data: inboxes }] = await Promise.all([
     supabase.from("campaigns").select("*").eq("id", id).is("deleted_at", null).maybeSingle(),
-    supabase.from("offers").select("id, name").is("deleted_at", null).order("name"),
+    supabase.from("offers").select("id, name, case_studies(title, deleted_at)").is("deleted_at", null).order("name"),
     supabase.from("inboxes").select("id, email").is("deleted_at", null).order("email"),
   ]);
   if (!c) notFound();
@@ -28,8 +29,11 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
     employeeMax: icp.employeeMax?.toString() ?? "",
     keywordsInclude: icp.keywordsInclude.join(", "),
     keywordsExclude: icp.keywordsExclude.join(", "),
-    researchFirst: !icp.requireEmail && icp.leadSource !== "apollo",
+    researchFirst: icp.leadSource === "csv" && !icp.requireEmail,
     leadSource: icp.leadSource,
+    seniorities: icp.seniorities.join(", "),
+    hiringTitles: icp.hiringTitles.join(", "),
+    minOpenJobs: icp.minOpenJobs?.toString() ?? "",
     targetRoles: c.target_roles.join(", "),
     regions: c.regions.join(", "),
     scoreDraftMin: c.score_draft_min,
@@ -47,8 +51,13 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   };
   return (
     <>
+      <BackLink href="/setup#campaign">Setup</BackLink>
       <PageHeader title={`Edit: ${c.name}`} />
-      <CampaignForm defaults={defaults} offers={offers ?? []} inboxes={inboxes ?? []} />
+      <CampaignForm
+        defaults={defaults}
+        offers={(offers ?? []).map((o) => ({ id: o.id, name: o.name, caseStudies: o.case_studies.filter((x) => !x.deleted_at).map((x) => x.title) }))}
+        inboxes={inboxes ?? []}
+      />
     </>
   );
 }

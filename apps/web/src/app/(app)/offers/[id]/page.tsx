@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { can } from "@outreach/core";
+import { BackLink } from "@/components/bits";
 import { PageHeader } from "@/components/page-header";
 import { LinkButton } from "@/components/link-button";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ export default async function OfferPage({ params, searchParams }: { params: Prom
 
   return (
     <>
+      <BackLink href="/setup#offer">Setup</BackLink>
       <PageHeader title={offer.name} description={manage ? "Edit the offer and its case studies." : "Read-only view."} />
       {manage ? (
         <OfferForm offer={offer} />

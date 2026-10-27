@@ -43,7 +43,7 @@ export const GMAIL_MESSAGES: Record<string, { tone: "ok" | "error"; text: string
   no_code: { tone: "error", text: "Google did not return a sign-in code. Try again." },
   token: { tone: "error", text: "Google would not exchange the sign-in code (check GOOGLE_CLIENT_SECRET and that the redirect URI is registered exactly). Nothing was connected." },
   no_refresh_token: { tone: "error", text: "Google did not give a long-lived sign-in. Remove the app under your Google Account > Security > Third-party access, then connect again." },
-  scopes: { tone: "error", text: "Both permissions (create drafts, manage labels) must be allowed. Connect again and tick both boxes. Nothing was stored." },
+  scopes: { tone: "error", text: "Both permissions (create drafts, label them) must be allowed. Connect again and tick both boxes. Nothing was stored." },
   wrong_account: { tone: "error", text: "You signed in to a different Gmail account than this mailbox. Nothing was stored: choose the matching account in the Google window." },
   profile: { tone: "error", text: "Connected to Google but could not read which account signed in. Nothing was stored." },
   no_inbox: { tone: "error", text: "That mailbox does not exist." },

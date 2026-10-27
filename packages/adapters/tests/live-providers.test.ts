@@ -39,9 +39,15 @@ describe("live LLM (Anthropic SDK)", () => {
     const { client, calls } = stub({ content: [{ type: "text", text: '{"ok":true}', citations: null }] as never });
     const r = await createLiveLlm({ apiKey: "k", client }).complete({ tier: "cheap", model: "claude-haiku-5-5", system: "sys", prompt: "hello", maxTokens: 200 });
     expect(r.text).toBe('{"ok":true}');
-    expect(r.usage.units).toEqual({ input_token: 120, output_token: 30 });
+    expect(r.usage.units).toEqual({ "input_token@claude-haiku-5-5": 120, "output_token@claude-haiku-5-5": 30 });
     expect(calls[0]).toMatchObject({ model: "claude-haiku-5-5", system: "sys", messages: [{ role: "user", content: "hello" }] });
     expect(calls[0]!.output_config).toEqual({ effort: "low" });
+  });
+
+  it("accepts a model written for OpenRouter and sends the Anthropic id", async () => {
+    const { client, calls } = stub({ content: [{ type: "text", text: "x", citations: null }] as never });
+    await createLiveLlm({ apiKey: "k", client }).complete({ tier: "strong", model: "anthropic/claude-sonnet-5.5", prompt: "p" });
+    expect(calls[0]!.model).toBe("claude-sonnet-5-5");
   });
 
   it("never lets a small max_tokens starve the answer, and sends no sampling parameters", async () => {
@@ -234,11 +240,12 @@ describe("requestJson", () => {
 });
 
 describe("adapter wiring", () => {
-  it("live Claude, Serper, fetcher and ZeroBounce are real adapters now; Apollo and Crunchbase still fail loudly", () => {
-    const a = createAdapters({ ADAPTER_LLM: "live", ANTHROPIC_API_KEY: "k", ADAPTER_SEARCH: "live", SERPER_API_KEY: "k", ADAPTER_FETCHER: "live", ADAPTER_VERIFIER: "live", ZEROBOUNCE_API_KEY: "k", ADAPTER_APOLLO: "live", APOLLO_API_KEY: "k" });
+  it("live Claude, Serper, fetcher, ZeroBounce and Apollo are real adapters now; Crunchbase (not part of the product) still fails loudly", () => {
+    const a = createAdapters({ ADAPTER_LLM: "live", ANTHROPIC_API_KEY: "k", ADAPTER_SEARCH: "live", SERPER_API_KEY: "k", ADAPTER_FETCHER: "live", ADAPTER_VERIFIER: "live", ZEROBOUNCE_API_KEY: "k", ADAPTER_APOLLO: "live", APOLLO_API_KEY: "k", ADAPTER_CRUNCHBASE: "live", CRUNCHBASE_API_KEY: "k" });
     expect(a.llm.complete).toBeTypeOf("function");
     expect(a.search.search).toBeTypeOf("function");
-    expect(() => a.apollo.searchPeople({ titles: [], seniorities: [], keywords: [], locations: [] }, 1)).toThrow(/Phase 8/);
+    expect(a.apollo.searchPeople).toBeTypeOf("function");
+    expect(() => a.crunchbase.lookupOrganization("acme.com")).toThrow(/Phase 7/);
   });
   it("live Gmail needs a mailbox token store", () => {
     const env = { ADAPTER_GMAIL: "live", GOOGLE_CLIENT_ID: "a", GOOGLE_CLIENT_SECRET: "b", TOKEN_ENCRYPTION_KEY: Buffer.alloc(32).toString("base64") };

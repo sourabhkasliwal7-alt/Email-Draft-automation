@@ -8,7 +8,14 @@ import {
   emailCheckPasses,
   keepDate,
   leadsToFind,
+  buildWritePrompt,
+  explainFlag,
+  mergeWorkflowConfig,
   parseWorkflowConfig,
+  retryPatch,
+  workflowConfigToForm,
+  workflowFormSchema,
+  workflowFormToConfig,
   revealDecision,
   scoreLead,
   shouldStartScheduledRun,
@@ -163,4 +170,82 @@ describe("email rules (SRS section 8: W1-W9, C4)", () => {
     expect(emailCheckPasses(s([2, 2, 2, 2, 2, 0]))).toBe(false); // a zero
   });
   it("adds the footer from the settings", () => expect(withFooter("Hi", "1 Road", "Reply STOP")).toBe("Hi\n\n--\n1 Road\nReply STOP"));
+});
+
+describe("Settings form: the models", () => {
+  const form = () => workflowConfigToForm(parseWorkflowConfig({ white_label_line: "We do white-label work for agencies." }));
+  const parse = (over: Record<string, string> = {}) => workflowFormSchema.safeParse({ ...form(), ...over });
+  it("shows the three model names and saves a change to each", () => {
+    expect(form()).toMatchObject({ model_screen: "claude-haiku-5-5", model_extract: "claude-haiku-5-5", model_write: "claude-sonnet-5-5" });
+    const r = parse({ model_screen: "anthropic/claude-haiku-5.5", model_write: " claude-opus-5-5 " });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      const c = workflowFormToConfig(r.data, parseWorkflowConfig({}));
+      expect(c).toMatchObject({ model_screen: "anthropic/claude-haiku-5.5", model_extract: "claude-haiku-5-5", model_write: "claude-opus-5-5" });
+    }
+  });
+  it("refuses an empty model name", () => {
+    expect(parse({ model_write: "" }).success).toBe(false);
+    expect(parse({ model_screen: "  " }).success).toBe(false);
+  });
+});
+
+describe("the rewrite prompt names the exact rules that failed", () => {
+  const wctx = {
+    firstName: "Asha", title: "CTO", company: "Acme", businessType: "software", senderFirstName: "Sam", offerName: null, caseStudy: null, tools: "React and Node.",
+    facts: [{ id: "f1", type: "hiring", statement: "Acme is hiring", quote: "We are hiring", sourceUrl: "https://acme.com/careers" }],
+    config: { style_guide: "plain", reference_emails: [], white_label_line: "We do this as white-label work.", banned_phrases: ["synergy"] },
+  } as unknown as Parameters<typeof buildWritePrompt>[0];
+
+  it("quotes each failed rule next to what went wrong, and shows the last attempt", () => {
+    const flags = ["W2: 2 question marks (needs exactly one)", "W7: soft ask missing", "C4: score 8/12 (needs 9 with no zero); weak: soft ask", "greeting does not use the contact's first name"];
+    const { prompt } = buildWritePrompt(wctx, flags, { subject: "old subject", body: "Hi there, old body?" });
+    expect(prompt).toContain("THE LAST ATTEMPT FAILED THESE RULES");
+    expect(prompt).toContain("- FAILED W2: 2 question marks (needs exactly one)");
+    expect(prompt).toContain("RULE W2: Use exactly ONE of the given verified facts");
+    expect(prompt).toContain("RULE W7: Include the white-label line exactly as given");
+    expect(prompt).toContain("RULE C4: A reviewer scores six items");
+    expect(prompt).toContain("RULE (greeting): Start with the greeting");
+    expect(prompt).toContain("LAST ATTEMPT BODY:\nHi there, old body?");
+  });
+  it("the first attempt carries no failure text", () => {
+    expect(buildWritePrompt(wctx).prompt).not.toContain("FAILED");
+  });
+  it("a flag without a known rule is passed on as it is", () => {
+    expect(explainFlag("the writer returned unreadable output")).toBe("the writer returned unreadable output");
+  });
+});
+
+describe("Retry puts a lead back at the step that failed", () => {
+  const lead = (reason: string[], status = "approved", next: string | null = null) => ({ status, reason_codes: reason, next_action: next });
+  const both = { hasEmail: true, hasDraft: false };
+  it("a failed write goes back to writing, a failed Gmail save to saving (or writing if there is no text yet)", () => {
+    expect(retryPatch(lead(["step-failed", "write: boom"], "approved", "draft"), both)).toMatchObject({ status: "approved", next_action: "draft" });
+    expect(retryPatch(lead(["step-failed", "write: boom"]), { hasEmail: true, hasDraft: true })).toMatchObject({ status: "approved", next_action: "deliver" });
+    expect(retryPatch(lead(["gmail-failed", "x"]), { hasEmail: true, hasDraft: true })).toMatchObject({ status: "approved", next_action: "deliver" });
+    expect(retryPatch(lead(["gmail-failed", "x"]), both)).toMatchObject({ status: "approved", next_action: "draft" });
+    expect(retryPatch(lead(["draft-failed", "W2"], "disqualified"), both)).toMatchObject({ status: "approved", next_action: "draft" });
+  });
+  it("earlier steps are never redone: a failed email check restarts at that check, a failed research at the research", () => {
+    expect(retryPatch(lead(["step-failed", "reveal: ZeroBounce validate failed"]), both)).toMatchObject({ status: "approved", next_action: "reveal" });
+    expect(retryPatch(lead(["step-failed", "research: x"], "researching"), both)).toMatchObject({ status: "researching", next_action: null });
+    expect(retryPatch(lead(["step-failed", "quick check: x"], "imported"), both)).toMatchObject({ status: "imported" });
+    expect(retryPatch(lead(["extraction-suspect", "x"], "disqualified"), both)).toMatchObject({ status: "researching" });
+    expect(retryPatch(lead(["credit-cap", "x"], "disqualified"), both)).toMatchObject({ status: "approved", next_action: "reveal" });
+  });
+  it("a person has to act first when there is no email or a credit may have been spent", () => {
+    expect(retryPatch(lead(["no-email", "x"], "disqualified"), { hasEmail: false, hasDraft: false })).toBeNull();
+    expect(retryPatch(lead(["no-email", "x"], "disqualified"), both)).toMatchObject({ status: "imported" });
+    expect(retryPatch(lead(["credit-uncertain", "x"], "disqualified"), both)).toBeNull();
+    expect(retryPatch(lead(["below-threshold", "score 40"], "disqualified"), both)).toBeNull();
+  });
+});
+
+describe("saving one Setup section keeps the rest", () => {
+  it("merges only the given keys and still validates", () => {
+    const base = parseWorkflowConfig({ postal_address: "1 Main St", optout_line: "Reply STOP." });
+    const next = mergeWorkflowConfig(base, { schedule_enabled: true, run_time_ist: "07:15" });
+    expect(next).toMatchObject({ postal_address: "1 Main St", optout_line: "Reply STOP.", schedule_enabled: true, run_time_ist: "07:15", skip_verification: false });
+    expect(() => mergeWorkflowConfig(base, { run_time_ist: "25:99" })).toThrow();
+  });
 });

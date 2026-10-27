@@ -1,4 +1,5 @@
 import type { Adapters, AdapterMode, AdapterName } from "@outreach/adapters";
+import type { LlmProviderId } from "@outreach/core";
 import type { DbClient } from "@outreach/db";
 import type pg from "pg";
 
@@ -9,6 +10,8 @@ export interface WorkerCtx {
   pg: pg.Pool | null;
   adapters: Adapters;
   modes: Record<AdapterName, AdapterMode>;
+  /** where language-model calls go (LLM_PROVIDER); usage, prices and caps are recorded under this id. Default: anthropic */
+  llmProvider?: LlmProviderId;
   log: (message: string) => void;
   workerId: string;
 }

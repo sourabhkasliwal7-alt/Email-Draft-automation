@@ -26,7 +26,7 @@ export async function addInbox(_prev: ActionState, formData: FormData): Promise<
     .from("inboxes")
     .insert({ email: v.data.email, display_name: v.data.displayName || null, status: "disconnected" });
   if (error) return { ok: false, message: error.code === "23505" ? "An inbox with that address already exists." : dbErrorMessage(error) };
-  revalidatePath("/inboxes");
+  revalidatePath("/setup");
   return { ok: true, message: "Mailbox added. Press Connect Gmail on it to sign in to Google." };
 }
 
@@ -52,7 +52,7 @@ export async function saveInboxLimits(_prev: ActionState, formData: FormData): P
     })
     .eq("id", id);
   if (error) return { ok: false, message: dbErrorMessage(error) };
-  revalidatePath("/inboxes");
+  revalidatePath("/setup");
   return { ok: true, message: "Saved." };
 }
 
@@ -73,8 +73,8 @@ export async function disconnectInbox(formData: FormData): Promise<void> {
     }
   }
   await db.from("inboxes").update({ encrypted_refresh_token: null, scopes: [], status: "disconnected", connected_at: null, last_error: null }).eq("id", id);
-  revalidatePath("/inboxes");
-  redirect("/inboxes?gmail=disconnected");
+  revalidatePath("/setup");
+  redirect("/setup?gmail=disconnected#mailboxes");
 }
 
 /** Queues one Gmail draft addressed to the mailbox itself, so the connection can be checked without touching any lead. Nothing is sent. */
@@ -83,5 +83,5 @@ export async function createTestDraft(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await queueAdapterTest("gmail", id);
-  revalidatePath("/inboxes");
+  revalidatePath("/setup");
 }

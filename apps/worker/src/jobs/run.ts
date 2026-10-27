@@ -1,4 +1,3 @@
-import type { ApolloFilters } from "@outreach/adapters";
 import {
   ATTENTION_REASONS,
   approveTop,
@@ -17,9 +16,10 @@ import { makeSpender } from "../spend";
 import { leadEvent, loadLead, must, type LeadBundle } from "../pipeline/common";
 import { creditsUsed, revealWithGuard } from "../pipeline/reveal";
 import { acquireRunLock, heartbeatRunLock, isSkipped, loadWorkflowConfig, mapLimit, patchTotals, RunStopped, skipLead } from "../pipeline/run-common";
-import { loadFacts, researchLead, scoreStoredLead, screenLead } from "../pipeline/stages";
+import { RESEARCH_LIVE, loadFacts, researchIsLive, researchLead, scoreStoredLead, screenLead } from "../pipeline/stages";
+import { type PullResult, apolloFiltersFor, pullFromApollo } from "./apollo-pull";
 import { saveEmailDraft, writeEmail } from "../pipeline/write";
-import { importTable, loadSuppression } from "./import";
+import { loadSuppression } from "./import";
 import { suppressionHalt } from "./suppression";
 
 export interface RunPayload {
@@ -30,13 +30,8 @@ const GMAIL_LABEL = "AI-Outreach";
 const ROLE_LOCALS = new Set(["info", "sales", "contact", "hello", "admin", "support", "office", "team", "hr", "careers", "jobs", "marketing", "enquiries", "inquiries", "mail", "billing", "accounts", "noreply", "no-reply", "help"]);
 const CONCURRENCY = 3;
 
-const HEADERS = ["Apollo ID", "First Name", "Last Name", "Title", "Company", "Website", "Industry", "# Employees", "Country", "Profile URL"];
-const APOLLO_MAPPING = {
-  fields: { first_name: "First Name", last_name: "Last Name", job_title: "Title", company_name: "Company", company_domain: "Website", industry: "Industry", employee_count: "# Employees", country: "Country", profile_url: "Profile URL" },
-} as const;
-
 type Campaign = Tables<"campaigns">;
-type Batch = Tables<"pipeline_batches">;
+type FunnelCounts = { found: number; checked: number; researched: number; approved: number; drafted: number };
 
 // ---------------------------------------------------------------- A4: today's number
 export async function computeTarget(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowConfig, dryRun: boolean): Promise<{ target: number; reasons: string[] }> {
@@ -62,67 +57,29 @@ export async function computeTarget(ctx: WorkerCtx, campaign: Campaign, cfg: Wor
     dailyLimit = 0;
     reasons.push("no mailbox chosen on the campaign");
   }
-  // Apollo credits only limit campaigns that find people through Apollo: a CSV lead already has its email, so it never costs a credit
-  const usesCredits = icpSchema.parse(campaign.icp ?? {}).leadSource === "apollo";
+  // Apollo credits only limit leads that need an email revealed: a CSV lead already has its email, so it never costs a credit.
+  // CSV only: no limit. Apollo: the credits left. Both: the credits left plus the leads that already have an email.
+  const source = icpSchema.parse(campaign.icp ?? {}).leadSource;
+  const usesCredits = source !== "csv";
+  const free = source === "both" ? await countOpenLeadsWithEmail(ctx, campaign.id) : 0;
   const used = await creditsUsed(ctx);
-  const dailyCreditsLeft = Math.max(0, cfg.daily_reveal_cap - used.today);
-  const monthlyLeft = Math.max(0, cfg.monthly_credit_cap - used.month);
+  const dailyCreditsLeft = Math.max(0, cfg.daily_reveal_cap - used.today) + free;
+  const monthlyLeft = Math.max(0, cfg.monthly_credit_cap - used.month) + free;
   if (!dryRun && usesCredits) dailyLimit = Math.min(dailyLimit, dailyCreditsLeft);
   const total = dailyTarget([{ id: campaign.inbox_id ?? "none", dailyLimit }], dryRun || !usesCredits ? Number.MAX_SAFE_INTEGER : monthlyLeft).total;
   if (total === 0 && reasons.length === 0) reasons.push("today's limits are already used (campaign, mailbox or credits)");
   return { target: total, reasons };
 }
 
-// ---------------------------------------------------------------- B1: Apollo people search (free), imported through the same engine as a CSV
-async function pullFromApollo(ctx: WorkerCtx, campaign: Campaign, batch: Batch, job: JobInfo, want: number, cfg: WorkflowConfig) {
-  const icp = icpSchema.parse(campaign.icp ?? {});
-  const filters: ApolloFilters = {
-    titles: campaign.target_roles, seniorities: [], keywords: icp.industries, locations: icp.countries.length ? icp.countries : cfg.countries_in_scope, employeeMin: icp.employeeMin, employeeMax: icp.employeeMax, perPage: 25,
-  };
-  const spend = makeSpender(ctx, { campaignId: campaign.id, leadId: null, jobId: job.jobId, step: "apolloPull" });
-  const people: Awaited<ReturnType<typeof ctx.adapters.apollo.searchPeople>>["people"] = [];
-  let page = 1;
-  let totalPages = 1;
-  while (people.length < want && page <= totalPages && page <= cfg.max_pages_per_run) {
-    const res = await spend("apollo", "search_people", () => ctx.adapters.apollo.searchPeople(filters, page));
-    people.push(...res.people);
-    totalPages = res.totalPages;
-    page++;
-  }
-  const picked = people.slice(0, want);
-  if (!picked.length) return { found: 0, imported: 0, duplicate: 0, suppressed: 0, invalid: 0, note: "Apollo returned no people for these filters" };
-
-  const importBatch = must(
-    await ctx.db
-      .from("import_batches")
-      .insert({ file_name: `apollo-pull-${batch.id.slice(0, 8)}`, file_hash: `apollo:${job.jobId}`, campaign_id: campaign.id, mapping: APOLLO_MAPPING as unknown as Json, mode: "add_new", status: "mapped", runs: 1, user_id: batch.started_by })
-      .select("*")
-      .single(),
-    "create apollo import batch",
-  );
-  const rows = picked.map((p) => [p.id, p.firstName, p.lastName, p.title ?? "", p.organization?.name ?? "", p.organization?.domain ?? "", p.organization?.industry ?? "", String(p.organization?.employeeCount ?? ""), p.country ?? "", p.linkedinUrl ?? ""]);
-  const table = { sheetNames: ["apollo"], sheet: "apollo", headers: HEADERS, rawHeaders: HEADERS, hasHeader: true, rows, rowNumbers: rows.map((_, i) => i + 2), blankRows: 0, encoding: null, delimiter: null, warnings: [] };
-  const totals = await importTable(ctx.db, importBatch, { requireEmail: false, stored: APOLLO_MAPPING as never, run: 1 }, table, ctx.log);
-
-  // remember each person's Apollo id so the email can be revealed later, after approval
-  const imported = must(await ctx.db.from("import_rows").select("contact_id, original").eq("batch_id", importBatch.id).in("status", ["imported", "updated"]), "load imported apollo rows");
-  for (const r of imported) {
-    if (!r.contact_id) continue;
-    const personId = (r.original as Record<string, string>)["Apollo ID"];
-    const { data: has } = await ctx.db.from("enrichment_results").select("id").eq("contact_id", r.contact_id).eq("provider", "apollo").limit(1).maybeSingle();
-    if (!has && personId) await ctx.db.from("enrichment_results").insert({ contact_id: r.contact_id, provider: "apollo", result: { person_id: personId } as Json, credits_used: 0 });
-  }
-  return { found: picked.length, imported: totals.imported, duplicate: totals.duplicate, suppressed: totals.suppressed, invalid: totals.invalid, note: undefined as string | undefined };
-}
-
 // ---------------------------------------------------------------- B2: clean (excluded, suppressed, same company) and pick the leads to work on
 async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowConfig, want: number) {
+  const redone = await redoDemoResearch(ctx, campaign.id);
   const candidates = must(
     await ctx.db
       .from("campaign_leads")
       .select("id, contact_id, status, next_action, contacts(id, company_id, job_title, country, dnc, email_lower, companies(id, domain))")
       .eq("campaign_id", campaign.id)
-      .in("status", ["imported", "scored", "approved"])
+      .in("status", ["imported", "researching", "researched", "scored", "approved"])
       .order("created_at")
       .limit(1000),
     "load candidate leads",
@@ -181,7 +138,44 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
     if (c.company_id) seenCompanies.add(c.company_id);
     picked.push(l.id);
   }
-  return { picked, skippedBy, resumed };
+  return { picked, skippedBy, resumed, redone, openBefore: open.length };
+}
+
+/**
+ * A real run (real pages, search and model) must not build emails on research that the mock adapters invented. Leads that were
+ * screened, researched or scored earlier on mock adapters are put back to "imported" so the real steps redo them. Nothing is
+ * deleted: the demo evidence stays in the database but is ignored (see loadFacts).
+ */
+export async function redoDemoResearch(ctx: WorkerCtx, campaignId: string): Promise<number> {
+  if (!researchIsLive(ctx)) return 0;
+  const rows = must(
+    await ctx.db.from("campaign_leads").select("id, contact_id, status, next_action, contacts(company_id)").eq("campaign_id", campaignId).in("status", ["researching", "researched", "scored", "approved"]).limit(1000),
+    "load leads to check",
+  );
+  const stale = rows.filter((l) => l.status !== "approved" || ["reveal", "draft", "deliver"].includes(l.next_action ?? ""));
+  const companyIds = [...new Set(stale.map((l) => l.contacts?.company_id).filter((x): x is string => Boolean(x)))];
+  const live = new Set<string>();
+  for (let i = 0; i < companyIds.length; i += 200) {
+    const runs = must(await ctx.db.from("research_runs").select("company_id").eq("provider", RESEARCH_LIVE).in("company_id", companyIds.slice(i, i + 200)), "load research runs");
+    for (const r of runs) live.add(r.company_id);
+  }
+  let redone = 0;
+  for (const l of stale) {
+    const companyId = l.contacts?.company_id;
+    if (companyId && live.has(companyId)) continue; // real research exists for this company
+    must(await ctx.db.from("campaign_leads").update({ status: "imported", next_action: null, lead_score: null, score_components: {}, trigger: null, trigger_date: null, trigger_source: null, reason_codes: [] }).eq("id", l.id), "restart lead");
+    await leadEvent(ctx.db, { id: l.id, contact_id: l.contact_id }, "restarted", { why: "its research was demo text from mock adapters" });
+    redone++;
+  }
+  return redone;
+}
+
+/** A step that threw an error: the lead stays where it is (so the next run retries it) and is listed in Needs attention with the reason. */
+async function recordStepFailure(db: WorkerCtx["db"], leadId: string, step: string, message: string) {
+  const { data: lead } = await db.from("campaign_leads").select("id, contact_id").eq("id", leadId).maybeSingle();
+  if (!lead) return;
+  must(await db.from("campaign_leads").update({ reason_codes: ["step-failed", `${step}: ${message}`.slice(0, 400)] }).eq("id", leadId), "save step failure");
+  await leadEvent(db, lead, "step_failed", { step, error: message });
 }
 
 // ---------------------------------------------------------------- the run
@@ -221,6 +215,11 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
   };
   const beat = setInterval(() => void heartbeatRunLock(ctx, batch.id, job.jobId).catch((e) => ctx.log(`heartbeat failed: ${(e as Error).message}`)), 30_000);
   let errors = 0;
+  /** what the Home page shows: Found -> Checked -> Researched -> Approved -> Drafted */
+  const funnel: FunnelCounts = { found: 0, checked: 0, researched: 0, approved: 0, drafted: 0 };
+  /** how the emails of this run came out: right the first time, right after the one rewrite, or not at all */
+  const quality = { firstTry: 0, afterRewrite: 0, failed: 0 };
+  const failures: { lead: string; step: string; message: string }[] = [];
   const safely = async <T>(lead: { id: string }, label: string, fn: () => Promise<T>): Promise<T | undefined> => {
     await checkStop();
     if (stop) return undefined;
@@ -230,7 +229,11 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       const n = (e as Error).name;
       if (n === "CapReachedError" || n === "MissingPriceError") throw e;
       errors++;
-      ctx.log(`${label} failed for lead ${lead.id}: ${(e as Error).message}`);
+      const message = ((e as Error).message ?? String(e)).replace(/\s+/g, " ").slice(0, 300);
+      ctx.log(`${label} failed for lead ${lead.id}: ${message}`);
+      failures.push({ lead: lead.id, step: label, message });
+      // never silent: the lead shows up in Needs attention with the step and the reason, and the next run tries it again
+      await recordStepFailure(db, lead.id, label, message).catch((err) => ctx.log(`could not save the failure of lead ${lead.id}: ${(err as Error).message}`));
       return undefined;
     }
   };
@@ -257,19 +260,28 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }
       const want = leadsToFind(target, cfg.approval_rate);
       const icp = icpSchema.parse(campaign.icp ?? {});
-      if (icp.leadSource === "apollo") {
-        try {
-          const pull = await pullFromApollo(ctx, campaign, batch, job, want, cfg);
-          await patchTotals(db, batch.id, { pull }, { step: "search", count: pull.found, note: pull.note ?? `${pull.imported} new, ${pull.duplicate} duplicates, ${pull.suppressed} suppressed, ${pull.invalid} invalid` });
-        } catch (e) {
-          const n = (e as Error).name;
-          if (n === "CapReachedError" || n === "MissingPriceError") throw e;
-          await patchTotals(db, batch.id, {}, { step: "search", count: 0, note: `Apollo search failed (${(e as Error).message}); using leads already in the campaign` });
+      if (icp.leadSource === "apollo" || icp.leadSource === "both") {
+        // "both": the leads already in the campaign (CSV) come first, Apollo only fills what is still missing
+        const have = icp.leadSource === "both" ? await countOpenLeads(ctx, campaign.id) : 0;
+        const wantFromApollo = Math.max(0, want - have);
+        const skipWhy = apolloSkipReason(ctx, dryRun, wantFromApollo);
+        if (skipWhy) await patchTotals(db, batch.id, {}, { step: "search", count: 0, note: skipWhy });
+        else {
+          try {
+            const pull = await pullFromApollo(ctx, campaign, { id: batch.id, started_by: batch.started_by }, job, wantFromApollo, cfg);
+            await patchTotals(db, batch.id, { pull }, { step: "search", count: pull.found, note: pull.note ?? `${pull.imported} new, ${pull.duplicate} duplicates, ${pull.suppressed} suppressed, ${pull.invalid} invalid` });
+          } catch (e) {
+            const n = (e as Error).name;
+            if (n === "CapReachedError" || n === "MissingPriceError") throw e;
+            await patchTotals(db, batch.id, {}, { step: "search", count: 0, note: `Apollo search failed (${(e as Error).message}); using the leads already in the campaign` });
+          }
         }
       }
-      const { picked, skippedBy, resumed } = await cleanAndSelect(ctx, campaign, cfg, want);
-      const cleanNote = [resumed ? `${resumed} approved lead(s) continued from an earlier run` : "", Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""].filter(Boolean).join("; ");
-      await patchTotals(db, batch.id, { leadIds: picked, cleanSkipped: skippedBy, fanout_done: true }, { step: "clean", count: picked.length, note: cleanNote || undefined });
+      const { picked, skippedBy, resumed, redone } = await cleanAndSelect(ctx, campaign, cfg, want);
+      funnel.found = picked.length + Object.values(skippedBy).reduce((a, n) => a + n, 0);
+      funnel.checked = picked.length;
+      const cleanNote = [redone ? `${redone} lead(s) had demo research from mock adapters and were started again with the real ones` : "", resumed ? `${resumed} approved lead(s) continued from an earlier run` : "", Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""].filter(Boolean).join("; ");
+      await patchTotals(db, batch.id, { leadIds: picked, cleanSkipped: skippedBy, funnel, fanout_done: true }, { step: "clean", count: picked.length, note: cleanNote || undefined });
       await db.from("pipeline_batches").update({ fanout_done: true }).eq("id", batch.id);
       batch = await reload();
     }
@@ -283,7 +295,14 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
         return screenLead(ctx, spendFor(lead, "screen"), cfg, lead);
       }),
     );
-    await patchTotals(db, batch.id, {}, { step: "quick check", count: stageA.filter((r) => r && !isSkipped(r)).length, note: `${stageA.filter(isSkipped).length} did not pass` });
+    {
+      const didNotPass = stageA.filter(isSkipped).length;
+      const checkedNow = stageA.filter((r) => r && !isSkipped(r)).length;
+      const past = (await leadsIn(ids)).filter((l) => l.status !== "imported" && l.status !== "disqualified").length; // moved on to research, now or in an earlier run
+      const earlier = Math.max(0, past - checkedNow);
+      funnel.checked = past;
+      await patchTotals(db, batch.id, { funnel }, { step: "quick check", count: past, note: `${past} passed (${checkedNow} checked now${earlier ? `, ${earlier} had already passed in an earlier run` : ""}); ${didNotPass} did not pass` });
+    }
 
     // ------------------------------------------------ 3. Stage B: research, facts with exact quotes, score in code
     await mapLimit(ids, CONCURRENCY, shouldStop, (id) =>
@@ -303,7 +322,8 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }),
     );
     let leads = await leadsIn(ids);
-    await patchTotals(db, batch.id, {}, { step: "research and score", count: leads.filter((l) => l.status === "scored" || l.status === "approved" || l.status === "draft_ready").length, note: `${leads.filter((l) => l.status === "disqualified").length} skipped so far` });
+    funnel.researched = leads.filter((l) => ["researched", "scored", "approved", "draft_ready"].includes(l.status)).length;
+    await patchTotals(db, batch.id, { funnel }, { step: "research and score", count: leads.filter((l) => l.status === "scored" || l.status === "approved" || l.status === "draft_ready").length, note: `${leads.filter((l) => l.status === "disqualified").length} skipped so far` });
 
     // ------------------------------------------------ 4. approve the best leads (cut-off, up to today's number)
     await checkStop();
@@ -312,7 +332,8 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
     const alreadyApproved = leads.filter((l) => ["approved", "draft_ready"].includes(l.status)).length;
     const ranked = approveTop(scored.map((l) => ({ id: l.id, score: l.lead_score ?? 0 })), cfg.approve_threshold, Math.max(0, target - alreadyApproved));
     if (dryRun) {
-      await patchTotals(db, batch.id, { wouldApprove: ranked.approved.map((a) => a.id) }, { step: "approve (dry run)", count: ranked.approved.length, note: "leads left as scored; nothing was spent on credits" });
+      funnel.approved = alreadyApproved + ranked.approved.length;
+      await patchTotals(db, batch.id, { wouldApprove: ranked.approved.map((a) => a.id), funnel }, { step: "approve (dry run)", count: ranked.approved.length, note: "leads left as scored; nothing was spent on credits" });
     } else if (!stop) {
       for (const a of ranked.approved) {
         const lead = leads.find((l) => l.id === a.id)!;
@@ -321,7 +342,8 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }
       for (const b of ranked.below) await skipLead(db, leads.find((l) => l.id === b.id)!, "below-threshold", `score ${b.score}`);
       for (const o of ranked.overQuota) await skipLead(db, leads.find((l) => l.id === o.id)!, "over-quota", `score ${o.score}`);
-      await patchTotals(db, batch.id, {}, { step: "approve", count: ranked.approved.length, note: `cut-off ${cfg.approve_threshold}, today's number ${target}; ${ranked.below.length} below the cut-off, ${ranked.overQuota.length} over the number` });
+      funnel.approved = alreadyApproved + ranked.approved.length;
+      await patchTotals(db, batch.id, { funnel }, { step: "approve", count: ranked.approved.length, note: `cut-off ${cfg.approve_threshold}, today's number ${target}; ${ranked.below.length} below the cut-off, ${ranked.overQuota.length} over the number` });
     }
 
     if (!dryRun && !stop) {
@@ -338,15 +360,16 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           const fresh = await loadLead(db, id);
           const c = fresh.contacts!;
           let status = c.email_status;
-          if (status === "unknown") {
+          if (status === "unknown" && !cfg.skip_verification) {
             const v = await spend("verifier", "verify", () => ctx.adapters.verifier.verify(r.email));
             status = v.status;
             must(await db.from("contacts").update({ email_status: v.status }).eq("id", c.id), "save email status");
             if (v.status === "invalid") await db.from("suppression").insert({ email_lower: r.email.toLowerCase(), scope: "global", reason: "invalid email (verifier)", source: "verifier" });
           }
-          if (status === "invalid" || (status !== "valid" && !cfg.allow_risky)) return skipLead(db, lead, "bad-email", status);
+          // with "Skip email verification" (testing only) an unchecked address goes on; a known-bad one never does
+          if (status === "invalid" || (status !== "valid" && !cfg.allow_risky && !(cfg.skip_verification && status === "unknown"))) return skipLead(db, lead, "bad-email", status);
           must(await db.from("campaign_leads").update({ next_action: "draft" }).eq("id", id), "ready to write");
-          await leadEvent(db, lead, "email_ready", { status, revealed: r.revealed });
+          await leadEvent(db, lead, "email_ready", { status, revealed: r.revealed, verification_skipped: cfg.skip_verification && status === "unknown" });
         }),
       );
       leads = await leadsIn(ids);
@@ -370,7 +393,12 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
             const facts = await loadFacts(ctx, company.id, cfg.developer_keywords);
             if (!facts.length) return skipLead(db, lead, "no-verified-fact");
             const w = await writeEmail(ctx, spendFor(lead, "write"), cfg, lead, facts, sender || "Sourabh", seen);
-            if (!w.ok) return skipLead(db, lead, "draft-failed", w.problems.slice(0, 3).join(" | ").slice(0, 400));
+            if (!w.ok) {
+              quality.failed++;
+              return skipLead(db, lead, "draft-failed", w.problems.join(" | ").slice(0, 600));
+            }
+            if (w.email.attempts <= 1) quality.firstTry++;
+            else quality.afterRewrite++;
             await saveEmailDraft(ctx, lead, w.email, campaign.inbox_id);
             must(await db.from("campaign_leads").update({ next_action: "deliver" }).eq("id", id), "ready to deliver");
             lead = await loadLead(db, id);
@@ -384,8 +412,14 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       );
     }
 
+    if (failures.length) {
+      const sample = failures.slice(0, 3).map((f) => `${f.step}: ${f.message.slice(0, 120)}`).join(" | ");
+      await patchTotals(db, batch.id, { failures: failures.slice(0, 50) }, { step: "errors", count: failures.length, note: `${failures.length} step(s) failed with an error and are in Needs attention. ${sample}` });
+    }
     await checkStop();
-    const summary = await buildSummary(ctx, batch.id, ids, dryRun, startedAt);
+    const summary = await buildSummary(ctx, batch.id, ids, dryRun, startedAt, quality);
+    funnel.drafted = summary.drafts;
+    await patchTotals(db, batch.id, { funnel });
     if (stop) {
       const why = (stop as RunStopped).why;
       if (why === "time_limit") {
@@ -396,7 +430,9 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }
       return { stopped: why };
     }
-    const notes = [dryRun ? "dry run finished" : `${summary.drafts} Gmail draft(s) created`, ...(mailboxDown ? [`stopped writing: ${mailboxDown}`] : []), ...labelNotes];
+    const written = quality.firstTry + quality.afterRewrite + quality.failed;
+    const qualityNote = written ? `email quality: ${quality.firstTry} of ${written} right the first time, ${quality.afterRewrite} after a rewrite, ${quality.failed} not good enough` : "";
+    const notes = [dryRun ? "test run finished" : `${summary.drafts} Gmail draft(s) created`, ...(qualityNote ? [qualityNote] : []), ...(summary.needsAttention ? [`${summary.needsAttention} lead(s) in Needs attention`] : []), ...(mailboxDown ? [`stopped writing: ${mailboxDown}`] : []), ...labelNotes];
     await patchTotals(db, batch.id, { summary, errors }, { step: "done", count: summary.drafts, note: notes.join("; ") });
     await db.from("pipeline_batches").update({ status: "completed", finished_at: new Date().toISOString() }).eq("id", batch.id).eq("status", "running");
     return summary;
@@ -426,7 +462,7 @@ async function deliverToGmail(ctx: WorkerCtx, lead: LeadBundle, inboxId: string 
   const note = bracketNote({ score: lead.lead_score, trigger: lead.trigger, source: lead.trigger_source });
   try {
     const res = await ctx.adapters.gmail.createDraft({ inboxId, to: contact.email, subject: draft.subject, bodyText: `${note}\n\n${draft.body_text}`, label: GMAIL_LABEL });
-    must(await db.from("email_drafts").update({ gmail_draft_id: res.draftId, gmail_message_id_header: res.messageIdHeader, inbox_id: inboxId, status: "approved" }).eq("id", draft.id).is("gmail_draft_id", null), "save gmail draft id");
+    must(await db.from("email_drafts").update({ gmail_draft_id: res.draftId, gmail_message_id_header: res.messageIdHeader, gmail_message_id: res.messageId ?? null, inbox_id: inboxId, status: "approved" }).eq("id", draft.id).is("gmail_draft_id", null), "save gmail draft id");
     must(await db.from("campaign_leads").update({ status: "draft_ready", next_action: "wait-send", reason_codes: [] }).eq("id", lead.id), "mark drafted");
     await leadEvent(db, lead, "gmail_draft_created", { draft_id: draft.id, gmail_draft_id: res.draftId, label: GMAIL_LABEL, label_applied: res.labelApplied ?? null, label_note: res.labelNote ?? null });
     return { labelNote: res.labelNote };
@@ -440,7 +476,7 @@ async function deliverToGmail(ctx: WorkerCtx, lead: LeadBundle, inboxId: string 
 }
 
 // ---------------------------------------------------------------- daily summary
-export async function buildSummary(ctx: WorkerCtx, batchId: string, ids: string[], dryRun: boolean, startedAt: number) {
+export async function buildSummary(ctx: WorkerCtx, batchId: string, ids: string[], dryRun: boolean, startedAt: number, quality = { firstTry: 0, afterRewrite: 0, failed: 0 }) {
   const { db } = ctx;
   const leads: { status: string; reason_codes: string[]; next_action: string | null }[] = [];
   for (let i = 0; i < ids.length; i += 100) {
@@ -462,10 +498,37 @@ export async function buildSummary(ctx: WorkerCtx, batchId: string, ids: string[
     leads: ids.length,
     byStatus: Object.fromEntries([...new Set(leads.map((l) => l.status))].map((s) => [s, leads.filter((l) => l.status === s).length])),
     skipped,
-    needsAttention: leads.filter((l) => (l.status === "disqualified" && ATTENTION_REASONS.includes(l.reason_codes[0] as SkipReason)) || l.reason_codes[0] === "gmail-failed").length + cleanAttention,
+    needsAttention: leads.filter((l) => ATTENTION_REASONS.includes(l.reason_codes[0] as SkipReason)).length + cleanAttention,
     drafts,
+    quality,
     creditsUsed: (ledger ?? []).reduce((a, r) => a + r.credits, 0),
     costUsd: Number((usage ?? []).reduce((a, r) => a + Number(r.cost_usd), 0).toFixed(4)),
     minutes: Math.round((Date.now() - startedAt) / 6000) / 10,
   };
 }
+
+/** Open leads that already carry an email (CSV leads): they never need a credit. */
+async function countOpenLeadsWithEmail(ctx: WorkerCtx, campaignId: string): Promise<number> {
+  const { count } = await ctx.db.from("campaign_leads").select("id, contacts!inner(email)", { count: "exact", head: true }).eq("campaign_id", campaignId).in("status", ["imported", "researching", "researched", "scored", "approved"]).not("contacts.email", "is", null);
+  return count ?? 0;
+}
+
+/** How many leads of the campaign are waiting to be worked on right now (used by "both": CSV leads first, Apollo fills the rest). */
+async function countOpenLeads(ctx: WorkerCtx, campaignId: string): Promise<number> {
+  const { count } = await ctx.db.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).in("status", ["imported", "researching", "researched", "scored"]);
+  return count ?? 0;
+}
+
+/**
+ * Why Apollo is not searched in this run (null = search). A test run never spends Apollo credits, and a real run never works on
+ * the made-up people of the demo adapter: demo people have invented websites and addresses.
+ */
+export function apolloSkipReason(ctx: WorkerCtx, dryRun: boolean, want: number): string | null {
+  if (want <= 0) return "the leads already in the campaign are enough for today";
+  if (dryRun && ctx.modes.apollo === "live") return "test run: Apollo is not searched (the company search costs a credit); use Find leads with Apollo first, then test the leads you found";
+  if (researchIsLive(ctx) && ctx.modes.apollo !== "live") return "Apollo is in demo mode (no key yet): nothing was searched. Add APOLLO_API_KEY and set ADAPTER_APOLLO=live, then restart";
+  return null;
+}
+
+export type { PullResult };
+export { apolloFiltersFor };

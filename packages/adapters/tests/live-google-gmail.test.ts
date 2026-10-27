@@ -11,6 +11,7 @@ import {
   exchangeCode,
   googleRedirectUri,
   missingScopes,
+  needsReconnectForLabel,
   newOAuthNonce,
   refreshAccessToken,
   sameState,
@@ -53,7 +54,7 @@ describe("Google OAuth request", () => {
     expect(googleRedirectUri("http://localhost:3000/")).toBe("http://localhost:3000/api/google/callback");
     expect(googleRedirectUri("https://app.example.com/some/path")).toBe("https://app.example.com/api/google/callback");
   });
-  it("asks for offline access and exactly the two narrow scopes, nothing broader", () => {
+  it("asks for offline access and exactly two scopes: create drafts and put the label on them", () => {
     const url = new URL(buildConsentUrl({ clientId: "cid", redirectUri: "http://localhost:3000/api/google/callback", state: "st", loginHint: "me@gmail.com" }));
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
     expect(url.searchParams.get("access_type")).toBe("offline");
@@ -62,12 +63,15 @@ describe("Google OAuth request", () => {
     expect(url.searchParams.get("state")).toBe("st");
     expect(url.searchParams.get("login_hint")).toBe("me@gmail.com");
     expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:3000/api/google/callback");
-    expect(url.searchParams.get("scope")!.split(" ").sort()).toEqual(["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.labels"]);
+    expect(url.searchParams.get("scope")!.split(" ").sort()).toEqual(["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.modify"]);
     expect(GOOGLE_SCOPES).toHaveLength(2);
   });
   it("reports which scopes the person did not grant", () => {
     expect(missingScopes([...GOOGLE_SCOPES])).toEqual([]);
-    expect(missingScopes(["https://www.googleapis.com/auth/gmail.compose"])).toEqual(["https://www.googleapis.com/auth/gmail.labels"]);
+    expect(missingScopes(["https://www.googleapis.com/auth/gmail.compose"])).toEqual(["https://www.googleapis.com/auth/gmail.modify"]);
+    // a mailbox connected before gmail.modify existed needs one reconnect for the label
+    expect(needsReconnectForLabel(["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.labels"])).toBe(true);
+    expect(needsReconnectForLabel([...GOOGLE_SCOPES])).toBe(false);
   });
 });
 
@@ -183,7 +187,7 @@ describe("live Gmail: drafts", () => {
     const { store, events } = makeStore({ a: {} });
     const { fetchImpl, calls } = gmailFetch({ labelApply: "ok" });
     const res = await createLiveGmail(opts(store, fetchImpl)).createDraft(draftReq("a"));
-    expect(res).toMatchObject({ draftId: "draft-1", messageIdHeader: "<stored@mail.gmail.com>", labelApplied: true });
+    expect(res).toMatchObject({ draftId: "draft-1", messageId: "msg-1", messageIdHeader: "<stored@mail.gmail.com>", labelApplied: true });
     const create = calls.find((c) => c.url.endsWith("/drafts") && c.method === "POST")!;
     expect(create.auth).toBe("Bearer at-for-refresh-a");
     const raw = Buffer.from(String((create.body!.message as { raw: string }).raw), "base64url").toString("utf8");
@@ -201,14 +205,14 @@ describe("live Gmail: drafts", () => {
     expect(calls.filter((c) => /\/send\b/.test(c.url))).toEqual([]);
   });
 
-  it("with only compose + labels, a refused label does not fail the draft and says why", async () => {
-    const { store } = makeStore({ a: {} });
+  it("a refused label never fails the draft; an old mailbox (no gmail.modify) is told to reconnect", async () => {
+    const { store } = makeStore({ a: { scopes: ["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.labels"] } });
     const { fetchImpl, calls } = gmailFetch({ labelApply: "403" });
     const gmail = createLiveGmail(opts(store, fetchImpl));
     const first = await gmail.createDraft(draftReq("a"));
     expect(first.draftId).toBe("draft-1");
     expect(first.labelApplied).toBe(false);
-    expect(first.labelNote).toMatch(/gmail\.modify/);
+    expect(first.labelNote).toMatch(/reconnect it on the Setup page/);
     // it does not keep asking for something Google already refused for this mailbox
     const before = calls.filter((c) => c.url.includes("/modify")).length;
     const second = await gmail.createDraft(draftReq("a"));

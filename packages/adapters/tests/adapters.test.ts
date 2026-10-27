@@ -34,8 +34,8 @@ describe("adapter selection", () => {
   });
 
   it("a configured live adapter that is not built yet fails loudly instead of doing nothing", () => {
-    const a = createAdapters({ ADAPTER_APOLLO: "live", APOLLO_API_KEY: "k" });
-    expect(() => a.apollo.searchPeople({ titles: [], seniorities: [], keywords: [], locations: [] }, 1)).toThrow(LiveAdapterNotImplementedError);
+    const a = createAdapters({ ADAPTER_CRUNCHBASE: "live", CRUNCHBASE_API_KEY: "k" });
+    expect(() => a.crunchbase.lookupOrganization("acme.com")).toThrow(LiveAdapterNotImplementedError);
   });
 });
 

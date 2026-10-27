@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LLM_KEY_VAR, LlmProviderError, resolveLlmProvider } from "./live/llm-models";
 
 export const ADAPTER_NAMES = ["llm", "search", "fetcher", "crunchbase", "apollo", "verifier", "gmail"] as const;
 export type AdapterName = (typeof ADAPTER_NAMES)[number];
@@ -71,9 +72,17 @@ export function resolveAdapterModes(env: Record<string, string | undefined>): Re
 export function assertAdapterEnv(env: Record<string, string | undefined>): Record<AdapterName, AdapterMode> {
   const modes = resolveAdapterModes(env);
   const problems: string[] = [];
+  let llmKeyVar = LIVE_REQUIRED_VARS.llm[0]!;
+  try {
+    llmKeyVar = LLM_KEY_VAR[resolveLlmProvider(env)];
+  } catch (e) {
+    if (e instanceof LlmProviderError) problems.push(e.message);
+    else throw e;
+  }
   for (const name of ADAPTER_NAMES) {
     if (modes[name] !== "live") continue;
-    for (const v of LIVE_REQUIRED_VARS[name]) {
+    // the language model needs the key of the provider LLM_PROVIDER selects
+    for (const v of name === "llm" ? [llmKeyVar] : LIVE_REQUIRED_VARS[name]) {
       if (!envValue(env, v)) problems.push(`${v}${ENV_ALIASES[v] ? ` (or ${ENV_ALIASES[v]!.join(", ")})` : ""} is required because ${envVarFor(name)}=live`);
     }
   }

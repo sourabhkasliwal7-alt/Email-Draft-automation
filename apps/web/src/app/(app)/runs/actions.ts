@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { WORKFLOW_SETTINGS_KEY, parseWorkflowConfig } from "@outreach/core";
 import { cancelRun, resumeRun, startRun } from "@outreach/db";
 import { guardAction, type ActionState } from "@/lib/auth";
 import { validate } from "@/lib/forms";
@@ -19,14 +20,17 @@ export async function startRunAction(_prev: ActionState, formData: FormData): Pr
   if (!campaign) return { ok: false, message: "That campaign no longer exists." };
   const db = createServiceDb();
   const { data: active } = await db.from("pipeline_batches").select("id, status").eq("campaign_id", campaign.id).in("status", ["running", "paused"]).maybeSingle();
-  if (active) return { ok: false, message: active.status === "paused" ? "This campaign has a paused run. Resume or cancel it first." : "This campaign already has a run in progress." };
+  if (active) return { ok: false, message: active.status === "paused" ? "This campaign has a paused run. Resume or cancel it first (on Home)." : "This campaign already has a run in progress." };
+  // "Always run as a test run" (Setup > Advanced) makes every run a test: record it as one so the screens say TEST
+  const { data: cfgRow } = await guard.supabase.from("settings").select("value").eq("key", WORKFLOW_SETTINGS_KEY).maybeSingle();
+  const test = v.data.dryRun || parseWorkflowConfig(cfgRow?.value).dry_run;
   try {
-    await startRun(db, campaign.id, { startedBy: guard.user.id, dryRun: v.data.dryRun, label: v.data.dryRun ? "manual (dry run)" : "manual" });
+    await startRun(db, campaign.id, { startedBy: guard.user.id, dryRun: test, label: test ? "manual (test run)" : "manual" });
   } catch (e) {
     return { ok: false, message: (e as Error).message };
   }
-  revalidatePath("/runs");
-  return { ok: true, message: `${v.data.dryRun ? "Dry run" : "Run"} started for ${campaign.name}. The worker picks it up within a few seconds.` };
+  revalidatePath("/");
+  return { ok: true, message: `${test ? "Test run" : "Run"} started for ${campaign.name}. It begins within a few seconds.` };
 }
 
 export async function resumeRunAction(formData: FormData): Promise<void> {
@@ -34,7 +38,7 @@ export async function resumeRunAction(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await resumeRun(createServiceDb(), id);
-  revalidatePath("/runs");
+  revalidatePath("/");
   revalidatePath(`/runs/${id}`);
 }
 
@@ -43,6 +47,6 @@ export async function cancelRunAction(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await cancelRun(createServiceDb(), id);
-  revalidatePath("/runs");
+  revalidatePath("/");
   revalidatePath(`/runs/${id}`);
 }

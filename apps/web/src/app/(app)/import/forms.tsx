@@ -9,9 +9,8 @@ export function UploadForm({ campaigns }: { campaigns: { id: string; name: strin
   const { state, onSubmit, pending } = useActionForm(createImport);
   const err = state.fieldErrors ?? {};
   return (
-    <form onSubmit={onSubmit} className="max-w-xl space-y-3 rounded-lg border p-4" noValidate>
-      <h2 className="font-medium">Upload a lead file</h2>
-      <p className="text-xs text-zinc-500">CSV, TSV or Excel (.xlsx), up to 25 MB and 50,000 rows. Apollo exports work as they are.</p>
+    <form onSubmit={onSubmit} className="space-y-3" noValidate data-testid="upload-form">
+      <p className="text-xs text-zinc-500">A CSV or Excel (.xlsx) file, up to 25 MB. Apollo exports work as they are. Next you check the columns, then press Import.</p>
       <Field label="Campaign" name="campaignId" error={err.campaignId}>
         <SelectInput name="campaignId" defaultValue="" options={[{ value: "", label: "(choose a campaign)" }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]} />
       </Field>
@@ -51,9 +50,9 @@ export interface MappingFormProps {
 }
 
 const MODES = [
-  { value: "add_new", label: "Add new only", hint: "New people are created. People who already exist elsewhere are added to this campaign unchanged." },
-  { value: "update_existing", label: "Update existing", hint: "Like add new, but fills in changed details (title, company, country...) for people who already exist." },
-  { value: "skip_duplicates", label: "Skip duplicates", hint: "Anyone who already exists in the system is left out completely." },
+  { value: "add_new", label: "Add new people only", hint: "New people are added. People we already know are added to this campaign without changing their details." },
+  { value: "update_existing", label: "Add new people and update the ones we know", hint: "Also fills in changed details (title, company, country...) for people we already know." },
+  { value: "skip_duplicates", label: "Leave out anyone we already know", hint: "Anyone already in the system is left out completely." },
 ];
 
 export function MappingForm(p: MappingFormProps) {
@@ -71,7 +70,7 @@ export function MappingForm(p: MappingFormProps) {
       <input type="hidden" name="header" value={p.headerMode} />
 
       <section className="space-y-3">
-        <h2 className="font-medium">Map your columns</h2>
+        <h2 className="font-medium">Check the columns</h2>
         <div className="flex flex-wrap gap-2 text-sm">
           <button type="button" className="rounded-md border px-3 py-1.5" onClick={() => setFields(p.autoMapping)}>
             Auto-detect
@@ -107,11 +106,11 @@ export function MappingForm(p: MappingFormProps) {
           ))}
         </div>
         {err.mapping && <p role="alert" data-testid="error-mapping" className="text-sm font-medium text-red-600">{err.mapping}</p>}
-        {!p.requireEmail && <p className="text-xs text-zinc-500">This campaign is research-first: rows without an email are allowed if they have a profile URL, or a name plus a company.</p>}
+        {!p.requireEmail && <p className="text-xs text-zinc-500">This campaign does not need an email in the file: rows without one are allowed if they have a profile link, or a name plus a company. (Emails are found with Apollo.)</p>}
       </section>
 
       <section className="space-y-2">
-        <h2 className="font-medium">How to treat people who already exist</h2>
+        <h2 className="font-medium">People we already know</h2>
         {MODES.map((m) => (
           <label key={m.value} className="flex items-start gap-2 text-sm">
             <input type="radio" name="mode" value={m.value} checked={mode === m.value} onChange={() => setMode(m.value)} className="mt-1" />
@@ -124,20 +123,20 @@ export function MappingForm(p: MappingFormProps) {
         <label className="mt-3 flex items-start gap-2 text-sm">
           <input type="checkbox" name="dryRun" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="mt-1" />
           <span>
-            <span className="font-medium">Dry run</span>
-            <span className="block text-xs text-zinc-500">Checks every row and shows the summary, but writes nothing. Recommended before the first real import.</span>
+            <span className="font-medium">Preview only</span>
+            <span className="block text-xs text-zinc-500">Checks every row and shows what would happen, but adds nothing. Optional.</span>
           </span>
         </label>
       </section>
 
       <section className="max-w-sm">
-        <Field label="Save this mapping as a template (optional)" name="templateName" error={err.templateName}>
-          <input id="templateName" name="templateName" className={inputClass} placeholder="e.g. Apollo people export" />
+        <Field label="Remember these columns for next time (optional name)" name="templateName" error={err.templateName}>
+          <input id="templateName" name="templateName" className={inputClass} placeholder="e.g. Apollo export" />
         </Field>
       </section>
 
       <FormMessage state={state} />
-      <SubmitButton pending={pending}>{dryRun ? "Start dry run" : "Start import"}</SubmitButton>
+      <SubmitButton pending={pending}>{dryRun ? "Preview only" : "Import"}</SubmitButton>
     </form>
   );
 }

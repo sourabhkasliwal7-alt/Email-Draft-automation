@@ -8,6 +8,7 @@ import {
   readTable,
   type Mapping,
 } from "@outreach/importer";
+import { BackLink } from "@/components/bits";
 import { Badge, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth";
@@ -56,7 +57,7 @@ export default async function ImportBatchPage({
   const view = loaded && loaded.ok ? loaded : null;
   const preview = view ? (
       <section className="space-y-2">
-        <h2 className="font-medium">Preview (first 20 of {view.table.rows.length.toLocaleString("en-US")} rows)</h2>
+        <h2 className="font-medium">First rows of your file (20 of {view.table.rows.length.toLocaleString("en-US")} rows)</h2>
         {view.table.warnings.map((w) => (
           <p key={w} className="text-xs text-amber-700">{w}</p>
         ))}
@@ -114,7 +115,7 @@ export default async function ImportBatchPage({
         sheet={view.table.sheet === "(csv)" ? "" : view.table.sheet}
         headerMode={view.headerMode}
         mode={batch.mode}
-        dryRun={batch.status === "completed" && batch.dry_run ? false : true}
+        dryRun={false}
         requireEmail={requireEmail}
       />
     ) : null;
@@ -130,10 +131,11 @@ export default async function ImportBatchPage({
 
   return (
     <>
+      <BackLink href="/leads">Leads</BackLink>
       <PageHeader
         title={batch.file_name}
         description={`Campaign: ${batch.campaigns?.name ?? "-"} · uploaded ${formatKolkata(batch.created_at)}`}
-        actions={<Badge tone={batch.status === "completed" ? "green" : batch.status === "failed" ? "red" : "amber"}>{batch.status === "completed" && batch.dry_run ? "dry run done" : batch.status}</Badge>}
+        actions={<Badge tone={batch.status === "completed" ? "green" : batch.status === "failed" ? "red" : "amber"}>{batch.status === "completed" && batch.dry_run ? "preview done" : batch.status}</Badge>}
       />
 
       {sameFile && sameFile.length > 0 && (
@@ -148,10 +150,10 @@ export default async function ImportBatchPage({
       {running && (
         <section data-testid="progress" className="mb-6 space-y-2 rounded-lg border p-4">
           <AutoRefresh />
-          <p className="font-medium">{batch.status === "mapped" ? "Waiting for the worker to pick this up…" : `${batch.dry_run ? "Dry run" : "Import"} in progress`}</p>
+          <p className="font-medium">{batch.status === "mapped" ? "Waiting for the background worker to pick this up…" : `${batch.dry_run ? "Preview" : "Import"} in progress`}</p>
           <div className="h-2 w-full overflow-hidden rounded bg-zinc-200"><div className="h-2 bg-zinc-900" style={{ width: `${pct}%` }} /></div>
           <p className="text-xs text-zinc-500">{(totals.processed ?? 0).toLocaleString("en-US")} of {(totals.total ?? 0).toLocaleString("en-US")} rows</p>
-          {batch.status === "mapped" && <p className="text-xs text-zinc-500">The worker runs the import in the background. If nothing happens, start it with <code>pnpm dev:worker</code>.</p>}
+          {batch.status === "mapped" && <p className="text-xs text-zinc-500">The import runs in the background. If nothing happens after a minute, the background worker is not running (<code>pnpm dev</code> starts it).</p>}
           {batch.status === "mapped" && (
             <form action={cancelImport}><input type="hidden" name="id" value={batch.id} /><Button type="submit" variant="outline" size="sm">Cancel</Button></form>
           )}
@@ -162,7 +164,7 @@ export default async function ImportBatchPage({
         <section className="mb-8 space-y-4">
           {batch.dry_run && (
             <p data-testid="dry-run-banner" className="rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
-              Dry run: nothing was written. This is what would happen. Review the rows below, then run the import for real from the form further down.
+              Preview only: nothing was added. This is what would happen. Look at the rows below, then press Import in the form further down to add them.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7" data-testid="summary">
@@ -207,7 +209,7 @@ export default async function ImportBatchPage({
 
       {showMapping && !parseError && (
         <div className="space-y-6">
-          {batch.status === "completed" && <h2 className="text-lg font-semibold">Run it for real</h2>}
+          {batch.status === "completed" && <h2 className="text-lg font-semibold">Now import for real</h2>}
           {preview}
           {mapping}
           {!!templatesForDelete?.length && (

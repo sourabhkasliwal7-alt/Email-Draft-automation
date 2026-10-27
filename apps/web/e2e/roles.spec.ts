@@ -4,11 +4,12 @@ import { hasDb, loginAs } from "./support";
 test.skip(!hasDb(), "needs the Supabase env in the root .env");
 test.describe.configure({ mode: "serial" });
 
+/** The whole menu: four items. Setup is only for people who set things up. */
 const NAV = {
-  admin: ["Dashboard", "Runs", "Needs attention", "Campaigns", "Import", "Suppression", "Mailboxes", "Offers", "Settings"],
-  operator: ["Dashboard", "Runs", "Needs attention", "Campaigns", "Import", "Suppression", "Mailboxes", "Offers"],
-  reviewer: ["Dashboard", "Needs attention", "Campaigns", "Suppression", "Offers"],
-  sender: ["Dashboard", "Campaigns", "Suppression", "Offers"],
+  admin: ["Home", "Leads", "Drafts", "Setup"],
+  operator: ["Home", "Leads", "Drafts", "Setup"],
+  reviewer: ["Home", "Leads", "Drafts"],
+  sender: ["Home", "Leads", "Drafts"],
 } as const;
 
 for (const role of ["admin", "operator", "reviewer", "sender"] as const) {
@@ -20,51 +21,84 @@ for (const role of ["admin", "operator", "reviewer", "sender"] as const) {
 }
 
 const FORBIDDEN: Record<string, string[]> = {
-  operator: ["/settings"],
-  reviewer: ["/settings", "/campaigns/new", "/offers/new", "/import", "/inboxes", "/sending", "/jobs", "/usage", "/runs"],
-  sender: ["/settings", "/campaigns/new", "/offers/new", "/import", "/review", "/inboxes", "/jobs", "/usage", "/runs", "/attention"],
+  // old addresses lead to Setup, which these roles may not open
+  reviewer: ["/setup", "/campaigns/new", "/offers/new", "/settings", "/inboxes", "/offers", "/campaigns", "/suppression", "/runs/00000000-0000-4000-8000-000000000000"],
+  sender: ["/setup", "/campaigns/new", "/offers/new", "/settings", "/inboxes", "/offers", "/campaigns", "/suppression", "/runs/00000000-0000-4000-8000-000000000000"],
 };
 
 for (const [role, paths] of Object.entries(FORBIDDEN)) {
   test(`${role}: direct URLs outside the role land on the Not allowed page`, async ({ page }) => {
-    await loginAs(page, role as "operator");
+    await loginAs(page, role as "reviewer");
     for (const p of paths) {
       await page.goto(p);
-      await expect(page, `${role} ${p}`).toHaveURL(/\/forbidden$/);
+      await expect(page, `${role} ${p}`).toHaveURL(/\/forbidden(#.*)?$/);
       await expect(page.getByTestId("forbidden")).toContainText(`Your role (${role})`);
     }
   });
 }
 
-test("reviewer and sender see campaigns and suppression read-only", async ({ page }) => {
+test("the old addresses lead to their new place", async ({ page }) => {
+  await loginAs(page, "admin");
+  const WHERE: [string, RegExp][] = [
+    ["/runs", /\/$/],
+    ["/attention", /\/drafts\?tab=attention$/],
+    ["/inboxes", /\/setup#mailboxes$/],
+    ["/settings", /\/setup#advanced$/],
+    ["/offers", /\/setup#offer$/],
+    ["/campaigns", /\/setup#campaign$/],
+    ["/suppression", /\/setup#advanced$/],
+    ["/import", /\/leads$/],
+  ];
+  for (const [from, to] of WHERE) {
+    await page.goto(from);
+    await expect(page, from).toHaveURL(to);
+  }
+  // the half-built screens are gone, not hidden
+  for (const gone of ["/review", "/sending", "/follow-ups", "/jobs", "/usage"]) {
+    const res = await page.goto(gone);
+    expect(res?.status(), gone).toBe(404);
+  }
+});
+
+test("reviewer and sender can look at leads and drafts, but not add leads or change anything", async ({ page }) => {
   for (const role of ["reviewer", "sender"] as const) {
     await loginAs(page, role);
-    await page.goto("/campaigns");
-    await expect(page.getByRole("link", { name: "New campaign" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Archive" })).toHaveCount(0);
-    await page.goto("/suppression");
-    await expect(page.getByRole("button", { name: "Add to list" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
+    await page.goto("/leads");
+    await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
+    await expect(page.getByTestId("card-csv")).toHaveCount(0);
+    await expect(page.getByTestId("card-apollo")).toHaveCount(0);
+    await page.goto("/drafts");
+    await expect(page.getByTestId("tab-drafts")).toBeVisible();
+    // only people who may act on a lead see the Needs attention tab; a sender does not
+    await expect(page.getByTestId("tab-attention")).toHaveCount(role === "reviewer" ? 1 : 0);
+    await page.goto("/");
+    await expect(page.getByTestId("start-run-form")).toHaveCount(0);
+    await expect(page.getByTestId("checklist")).toHaveCount(0);
     await page.context().clearCookies(); // not "Sign out": that would revoke the shared saved session
   }
 });
 
-test("operator sees the run page with a Start form (no send controls); admin sees the run settings and gets clear validation", async ({ page }) => {
+test("operator sees Home with a Start run form (no send controls); admin gets clear validation in Setup", async ({ page }) => {
   await loginAs(page, "operator");
-  await page.goto("/runs");
-  await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible();
+  await expect(page.getByTestId("status-card")).toBeVisible();
   await expect(page.getByText(/send/i).filter({ hasText: /approve|send now/i })).toHaveCount(0);
-  await page.goto("/attention");
-  await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible();
+  await page.goto("/drafts?tab=attention");
+  await expect(page.getByTestId("tab-attention")).toBeVisible();
+  // an operator opens Setup, but the technical settings are the admin's
+  await page.goto("/setup");
+  await expect(page.getByTestId("section-campaign")).toBeVisible();
+  await expect(page.getByTestId("form-schedule")).toHaveCount(0);
+  await expect(page.getByTestId("form-footer")).toHaveCount(0);
   await page.context().clearCookies();
 
   await loginAs(page, "admin");
-  await page.goto("/settings");
-  const form = page.getByTestId("workflow-settings");
+  await page.goto("/setup");
+  const form = page.getByTestId("form-schedule");
   await expect(form).toBeVisible();
-  await form.getByLabel("Daily start time (IST)").fill("25:99");
-  await form.getByRole("button", { name: "Save run settings" }).click();
+  await form.getByLabel("Start time (India time, 24-hour)").fill("25:99");
+  await form.getByRole("button", { name: "Save schedule" }).click();
   await expect(page.getByTestId("error-run_time_ist")).toContainText("HH:MM");
-  await expect(page.getByLabel(/SENDING_ENABLED/)).toHaveCount(0); // the sending switch is hidden in the app
+  await expect(page.getByLabel(/SENDING_ENABLED/)).toHaveCount(0); // there is no sending switch anywhere
 });

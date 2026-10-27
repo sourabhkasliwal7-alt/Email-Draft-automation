@@ -17,7 +17,7 @@ export async function markDncAction(formData: FormData): Promise<void> {
   const email = lead.contacts?.email_lower;
   if (email) await db.from("suppression").insert({ email_lower: email, scope: "global", reason: "marked do-not-contact from Needs attention", source: "manual" });
   await db.from("campaign_leads").update({ status: "disqualified", reason_codes: ["suppressed", "marked do-not-contact"], next_action: null }).eq("id", leadId);
-  revalidatePath("/attention");
+  revalidatePath("/drafts");
 }
 
 /** "Skip": the lead is closed as a manual skip and leaves the list. */
@@ -27,5 +27,5 @@ export async function skipLeadAction(formData: FormData): Promise<void> {
   const leadId = String(formData.get("id") ?? "");
   if (!leadId) return;
   await createServiceDb().from("campaign_leads").update({ status: "disqualified", reason_codes: ["manual"], next_action: null }).eq("id", leadId);
-  revalidatePath("/attention");
+  revalidatePath("/drafts");
 }

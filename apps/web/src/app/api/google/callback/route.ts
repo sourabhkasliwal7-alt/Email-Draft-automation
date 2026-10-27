@@ -25,7 +25,7 @@ import { createServiceDb } from "@/lib/supabase/service";
 export async function GET(request: NextRequest) {
   const cfg = googleConfig();
   const done = (code: string) => {
-    const res = NextResponse.redirect(new URL(`/inboxes?gmail=${code}`, cfg.siteUrl ?? request.url));
+    const res = NextResponse.redirect(new URL(`/setup?gmail=${code}#mailboxes`, cfg.siteUrl ?? request.url));
     res.cookies.set(OAUTH_COOKIE, "", { path: "/api/google", maxAge: 0 }); // one use only
     return res;
   };

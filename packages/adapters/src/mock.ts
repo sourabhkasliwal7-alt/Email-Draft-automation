@@ -78,6 +78,14 @@ const LAST = ["Rao", "Miller", "Wu", "Shah", "Kaya", "Noor", "Iyer", "Costa", "D
 const TITLES = ["COO", "Head of Operations", "VP Operations", "CTO", "Marketing Manager"];
 const INDUSTRIES = ["logistics", "saas", "retail"];
 export const MOCK_APOLLO_TOTAL = 60;
+/** the demo people's seniority, taken from the title like Apollo's own labels */
+function mockSeniority(title: string | null): string {
+  const t = (title ?? "").toLowerCase();
+  if (/^(coo|cto|ceo|cfo)\b/.test(t)) return "c_suite";
+  if (t.startsWith("vp")) return "vp";
+  if (t.startsWith("head")) return "head";
+  return "manager";
+}
 const PAGE_SIZE = 25;
 
 /** 60 deterministic people over 20 companies. No email is included, exactly like a real Apollo search. */
@@ -107,6 +115,11 @@ export const mockApollo: ApolloAdapter = {
       if (filters.titles.length && !filters.titles.some((t) => lc(p.title).includes(lc(t)))) return false;
       if (filters.keywords.length && !filters.keywords.some((k) => lc(p.organization?.industry).includes(lc(k)))) return false;
       if (filters.locations.length && !filters.locations.some((l) => lc(p.country) === lc(l))) return false;
+      // demo seniority from the title, and demo hiring (every other company has an open job)
+      if (filters.seniorities.length && !filters.seniorities.some((s) => mockSeniority(p.title) === lc(s))) return false;
+      const company = Number((p.organization?.domain ?? "").replace(/\D/g, ""));
+      if (filters.hiringTitles?.length && company % 2 !== 0) return false;
+      if (filters.minOpenJobs != null && filters.minOpenJobs > 3 && company % 2 !== 0) return false;
       const n = p.organization?.employeeCount ?? null;
       if (n != null && ((filters.employeeMin != null && n < filters.employeeMin) || (filters.employeeMax != null && n > filters.employeeMax))) return false;
       return true;
@@ -121,6 +134,14 @@ export const mockApollo: ApolloAdapter = {
     return { org: { name, domain, industry: "saas", employeeCount: 80, country: "IN" }, usage: { units: { call: 1 } } };
   },
   /** Every 7th person has no revealable email, so the "no email" path is exercised. */
+  async checkAccess() {
+    return {
+      health: { ok: true, message: "Demo mode: no key is used." },
+      search: { ok: true, message: "Demo mode: people search returns made-up people." },
+      reveal: { ok: true, message: "Demo mode: email reveal returns made-up addresses." },
+      usage: { units: { credit: 0 } },
+    };
+  },
   async revealEmail({ personId, flags }) {
     mockRevealLog.push({ personId, flags });
     const n = Number(personId.replace(/\D/g, ""));
@@ -216,7 +237,7 @@ export const mockLlm: LlmAdapter = {
       const first = get("FIRST_NAME");
       const company = get("COMPANY");
       // "Badwrite" companies get a bad first attempt (fixed on the rewrite); "Failwrite" ones never get fixed
-      const bad = company.includes("Badwrite") && (!req.prompt.includes("FIX THESE PROBLEMS") || company.includes("Failwrite"));
+      const bad = company.includes("Badwrite") && (!req.prompt.includes("THE LAST ATTEMPT FAILED THESE RULES") || company.includes("Failwrite"));
       const lines = [
         `Hi ${first},`,
         "",
@@ -254,7 +275,7 @@ export function createMockGmail(): GmailAdapter & { drafts: Map<string, { to: st
     async createDraft(req) {
       const draftId = `mock-draft-${drafts.size + 1}-${Math.random().toString(36).slice(2, 7)}`;
       drafts.set(draftId, { to: req.to, subject: req.subject, bodyText: req.bodyText, label: req.label });
-      return { draftId, messageIdHeader: `<${draftId}@mock.invalid>`, labelApplied: Boolean(req.label) };
+      return { draftId, messageIdHeader: `<${draftId}@mock.invalid>`, messageId: `mockmsg${drafts.size}`, labelApplied: Boolean(req.label) };
     },
     async listReplies() {
       return [];

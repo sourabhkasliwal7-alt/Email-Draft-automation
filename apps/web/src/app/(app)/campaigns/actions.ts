@@ -19,8 +19,8 @@ export async function saveCampaign(_prev: ActionState, formData: FormData): Prom
     : await guard.supabase.from("campaigns").insert(row);
   if (error) return { ok: false, message: dbErrorMessage(error) };
 
-  revalidatePath("/campaigns");
-  redirect("/campaigns");
+  revalidatePath("/setup");
+  redirect("/setup#campaign");
 }
 
 /** Soft delete: the campaign disappears from lists but all of its history stays. */
@@ -30,5 +30,5 @@ export async function archiveCampaign(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   await guard.supabase.from("campaigns").update({ deleted_at: new Date().toISOString(), status: "archived" }).eq("id", id);
-  revalidatePath("/campaigns");
+  revalidatePath("/setup");
 }

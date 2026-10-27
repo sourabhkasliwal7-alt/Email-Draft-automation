@@ -56,3 +56,11 @@ export async function loginAs(page: Page, role: E2ERole) {
 
 /** Unique per run so repeated runs never collide with leftovers. */
 export const RUN = `e2e-${Date.now().toString(36)}`;
+
+/** Opens Setup and unfolds the collapsed "Advanced" section (technical settings live there). */
+export async function openAdvanced(page: Page) {
+  await page.goto("/setup");
+  const advanced = page.locator("details#advanced");
+  if (!(await advanced.evaluate((el) => (el as HTMLDetailsElement).open))) await advanced.locator("> summary").click();
+  await expect(advanced).toHaveJSProperty("open", true);
+}

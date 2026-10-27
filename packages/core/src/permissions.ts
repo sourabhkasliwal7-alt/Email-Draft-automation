@@ -11,6 +11,8 @@ export type Role = (typeof ROLES)[number];
  */
 export const PERMISSIONS = {
   "dashboard.view": ["admin", "operator", "reviewer", "sender"],
+  "setup.view": ["admin", "operator"],
+  "drafts.view": ["admin", "operator", "reviewer", "sender"],
   "campaign.view": ["admin", "operator", "reviewer", "sender"],
   "campaign.manage": ["admin", "operator"],
   "offer.view": ["admin", "operator", "reviewer", "sender"],

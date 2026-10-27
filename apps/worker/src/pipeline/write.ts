@@ -80,8 +80,10 @@ export async function writeEmail(
 
   let feedback: string[] = [];
   let problems: string[] = [];
+  let previous: { subject: string; body: string } | undefined;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const { system, prompt } = buildWritePrompt(wctx, feedback);
+    // the rewrite is told the exact rules that failed (with the rule text) and sees its own last attempt
+    const { system, prompt } = buildWritePrompt(wctx, feedback, previous);
     const res = await paid("llm", "write", () => ctx.adapters.llm.complete({ tier: "strong", model: cfg.model_write, system, prompt, maxTokens: 700 }));
     const parsed = writeSchema.safeParse(parseJsonLoose(res.text));
     if (!parsed.success) {
@@ -90,6 +92,7 @@ export async function writeEmail(
       continue;
     }
     const w: WriteResult = parsed.data;
+    previous = { subject: w.subject, body: w.body };
     const flags = checkEmailCode(w, codeCtx);
     if (duplicateOf(w, seen)) flags.push("W8: subject or opening matches another draft in this run");
 

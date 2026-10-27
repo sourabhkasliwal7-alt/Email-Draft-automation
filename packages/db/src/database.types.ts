@@ -397,6 +397,7 @@ export type Database = {
           created_at: string
           facts: Json
           gmail_draft_id: string | null
+          gmail_message_id: string | null
           gmail_message_id_header: string | null
           id: string
           idempotency_key: string
@@ -418,6 +419,7 @@ export type Database = {
           created_at?: string
           facts?: Json
           gmail_draft_id?: string | null
+          gmail_message_id?: string | null
           gmail_message_id_header?: string | null
           id?: string
           idempotency_key: string
@@ -439,6 +441,7 @@ export type Database = {
           created_at?: string
           facts?: Json
           gmail_draft_id?: string | null
+          gmail_message_id?: string | null
           gmail_message_id_header?: string | null
           id?: string
           idempotency_key?: string
@@ -1813,6 +1816,14 @@ export type Database = {
           replies?: never
           sent?: never
           status?: string | null
+        }
+        Relationships: []
+      }
+      v_apollo_credits: {
+        Row: {
+          is_mock: boolean | null
+          month: number | null
+          today: number | null
         }
         Relationships: []
       }

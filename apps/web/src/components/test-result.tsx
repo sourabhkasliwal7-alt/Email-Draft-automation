@@ -21,6 +21,13 @@ export function TestResultLine({ test, testId }: { test: TestRow | undefined; te
       <p className={r.ok ? "font-medium text-emerald-700" : "font-medium text-red-700"}>{r.ok ? "OK" : "Failed"}: {r.message}</p>
       {r.ok && usage && <p className="text-zinc-600">Usage recorded: {usage}{r.costUsd !== undefined ? ` · cost $${r.costUsd}` : ""}</p>}
       {r.labelNote && <p className="text-amber-700">Note: {r.labelNote}.</p>}
+      {r.apollo && (
+        <ul className="list-disc pl-4 text-zinc-700" data-testid="apollo-test-details">
+          <li>Key: {r.apollo.health === false ? "not accepted" : "accepted"}{r.apollo.mode === "mock" ? " (demo mode: nothing real was called)" : ""}</li>
+          {r.apollo.search && <li>Finding people: {r.apollo.search.ok ? "allowed" : "not allowed"}{r.apollo.search.message ? `. ${r.apollo.search.message}` : ""}</li>}
+          {r.apollo.reveal && <li>Getting email addresses: {r.apollo.reveal.ok ? "allowed" : "not allowed"}{r.apollo.reveal.message ? `. ${r.apollo.reveal.message}` : ""}</li>}
+        </ul>
+      )}
       <p className="text-zinc-500">{formatKolkata(r.finishedAt)}</p>
     </div>
   );

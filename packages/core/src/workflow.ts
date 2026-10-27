@@ -26,8 +26,11 @@ export const workflowConfigSchema = z.object({
   same_company_cooldown_days: z.number().int().min(0).default(30),
   pages_per_site: z.number().int().min(1).max(10).default(6),
   linkedin_enabled: z.boolean().default(false),
+  /** "Always run as a test run" (no Apollo credits, no Gmail drafts). Off by default. */
   dry_run: z.boolean().default(false),
   allow_risky: z.boolean().default(false),
+  /** TESTING ONLY: do not check emails with the verifier. Off by default; Home shows a warning while it is on. */
+  skip_verification: z.boolean().default(false),
   run_limit_minutes: z.number().int().min(5).default(120),
   claude_daily_token_cap: z.object({ in: z.number().int().default(3_000_000), out: z.number().int().default(400_000) }).default({ in: 3_000_000, out: 400_000 }),
   model_screen: z.string().default("claude-haiku-5-5"),
@@ -53,6 +56,11 @@ export function parseWorkflowConfig(raw: unknown): WorkflowConfig {
   return workflowConfigSchema.parse(raw && typeof raw === "object" ? raw : {});
 }
 
+/** Change some settings and keep the rest: every Setup section saves only its own keys. Throws when the result is not valid. */
+export function mergeWorkflowConfig(existing: WorkflowConfig, patch: Partial<WorkflowConfig>): WorkflowConfig {
+  return workflowConfigSchema.parse({ ...existing, ...patch });
+}
+
 /** A2: a run must not start with settings that would make it unsafe or useless. Returns problems (empty = ok). */
 export function validateWorkflowConfig(c: WorkflowConfig, opts: { forDraftCreation: boolean }): string[] {
   const p: string[] = [];
@@ -76,14 +84,54 @@ export const SRS_STATUS = { candidate: "imported", screened: "researching", rese
 
 export const SKIP_REASONS = [
   "screen-failed", "no-data", "no-verified-fact", "below-threshold", "over-quota", "no-email", "bad-email", "role-address", "suppressed", "duplicate", "same-company",
-  "draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "consent-risk", "manual", "excluded", "gmail-failed", "dry-run",
+  "draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "consent-risk", "manual", "excluded", "gmail-failed", "dry-run", "step-failed",
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 export const NEXT_ACTIONS = ["research", "reveal", "draft", "deliver", "wait-send", "followup-1", "followup-2", "nurture-review", "none"] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 
 /** Skip reasons that need a person (shown in "Needs attention"); the others are normal outcomes of the funnel. */
-export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed", "no-email"];
+export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed", "no-email", "step-failed"];
+
+/**
+ * What "Retry" does for a lead in Needs attention: put it back at the step that failed (earlier steps are kept, so nothing
+ * that was already paid for runs again), clear the failure note, and let the next run continue it.
+ * Returns null when a person has to fix something first.
+ */
+export interface RetryPatch {
+  status: "imported" | "researching" | "approved";
+  next_action: string | null;
+  /** plain words for the button's confirmation */
+  step: string;
+}
+export function retryPatch(lead: { status: string; reason_codes: string[]; next_action: string | null }, opts: { hasEmail: boolean; hasDraft: boolean }): RetryPatch | null {
+  const reason = lead.reason_codes[0];
+  const failedStep = (lead.reason_codes[1] ?? "").split(":")[0] ?? "";
+  switch (reason) {
+    case "step-failed":
+      // the step name was saved with the failure ("write: ...", "reveal: ...", "research: ...")
+      if (failedStep === "write") return { status: "approved", next_action: opts.hasDraft ? "deliver" : "draft", step: "writing the email" };
+      if (failedStep === "reveal") return { status: "approved", next_action: "reveal", step: "getting and checking the email address" };
+      if (failedStep === "quick check") return { status: "imported", next_action: null, step: "the quick check" };
+      if (failedStep === "research") return { status: "researching", next_action: null, step: "the research" };
+      // unknown step: stay where the lead is, the run decides from its state
+      return { status: lead.status === "approved" ? "approved" : lead.status === "imported" ? "imported" : "researching", next_action: lead.next_action, step: "the step that failed" };
+    case "draft-failed":
+      return { status: "approved", next_action: "draft", step: "writing the email" };
+    case "gmail-failed":
+      return { status: "approved", next_action: opts.hasDraft ? "deliver" : "draft", step: "saving the draft in Gmail" };
+    case "credit-cap":
+      return { status: "approved", next_action: "reveal", step: "getting the email address (limits are checked again)" };
+    case "extraction-suspect":
+    case "no-verified-fact":
+    case "no-data":
+      return { status: "researching", next_action: null, step: "the research" };
+    case "no-email":
+      return opts.hasEmail ? { status: "imported", next_action: null, step: "the lead from the start" } : null;
+    default:
+      return null; // credit-uncertain (check Apollo first) and anything else: a person decides
+  }
+}
 
 export const SKIP_LABELS: Record<SkipReason, string> = {
   "screen-failed": "Does not look like a fit (quick check)",
@@ -106,6 +154,7 @@ export const SKIP_LABELS: Record<SkipReason, string> = {
   excluded: "Excluded domain, title or country",
   "gmail-failed": "Gmail draft could not be created: check the mailbox connection",
   "dry-run": "Dry run: nothing was spent or drafted",
+  "step-failed": "A step stopped with an error (the next run tries it again): see the detail",
 };
 
 const ALLOWED: Record<string, string[]> = {
@@ -413,8 +462,33 @@ export function toolsFor(businessType: string, byIndustry: Record<string, string
   return byIndustry[key ?? "default"] ?? "";
 }
 
+/**
+ * The rules an email must pass (SRS section 8), in the words the writer needs for a rewrite. These are the same rules the checks
+ * apply: the rewrite prompt quotes the exact rule next to what went wrong, so the writer fixes the real problem. Nothing here is looser
+ * than the checks themselves.
+ */
+const RULE_TEXT: Record<string, string> = {
+  W1: "The body must be 60 to 130 words.",
+  W2: "Use exactly ONE of the given verified facts (list its id in fact_ids_used) and ask exactly ONE question in the whole email: exactly one question mark.",
+  W3: "Never use a banned phrase (the BANNED list above), in any wording or case.",
+  W4: "No exclamation marks, emoji, links, email addresses in the body, or dashes used as pauses.",
+  W5: "Subject: 7 words at most, lower case or sentence case (not Title Case), no question mark.",
+  W6: "Write no number, client name or claim that is not in the fact you use or in the case study.",
+  W7: "Include the white-label line exactly as given (word for word), and end with a soft ask to share an example or talk (a reply is the only thing you ask for).",
+  W8: "Do not reuse the subject or the opening sentence of another draft from this run: write a fresh opening.",
+  C4: "A reviewer scores six items from 0 to 2: one true detail, one question about their process, tools for their industry, the white-label line, a soft ask, human tone. Every item needs at least 1 and the total at least 9 of 12.",
+  greeting: "Start with the greeting 'Hi <FIRST_NAME>,' using exactly the FIRST_NAME given above, and no other name.",
+};
+
+/** "W2: 2 question marks (needs exactly one)" -> that line plus the full rule behind it. */
+export function explainFlag(flag: string): string {
+  const code = /^(W\d|C4)\b/.exec(flag)?.[1] ?? (/greeting/i.test(flag) ? "greeting" : null);
+  const rule = code ? RULE_TEXT[code] : null;
+  return rule ? `${flag}\n  RULE ${code === "greeting" ? "(greeting)" : code}: ${rule}` : flag;
+}
+
 /** K1: the writer sees only verified facts (never raw pages), the first name and title, offer, case study, style guide and samples. */
-export function buildWritePrompt(ctx: WriteContext, feedback: string[] = []): { system: string; prompt: string } {
+export function buildWritePrompt(ctx: WriteContext, feedback: string[] = [], previous?: { subject: string; body: string }): { system: string; prompt: string } {
   const system =
     "[task:write] You write one short plain-text cold email in the sender's own voice (first person). Use EXACTLY ONE of the given facts. " +
     "Structure: subject (2-6 words, lower or sentence case, no question mark); one opening sentence with the true detail; ONE question about their process; one or two sentences naming the tools; the white-label line verbatim; a soft ask to share an example; sign-off with first name and Nuance Infotech. " +
@@ -435,7 +509,11 @@ export function buildWritePrompt(ctx: WriteContext, feedback: string[] = []): { 
     ...ctx.facts.map((f) => `FACT ${f.id}: ${f.statement} | QUOTE: ${f.quote}`),
     ...ctx.config.reference_emails.slice(0, 5).map((e, i) => `SAMPLE ${i + 1}: ${e.replace(/\n/g, " / ")}`),
   ];
-  if (feedback.length) lines.push("FIX THESE PROBLEMS FROM THE LAST ATTEMPT:", ...feedback.map((f) => `- ${f}`));
+  if (feedback.length) {
+    lines.push("THE LAST ATTEMPT FAILED THESE RULES. Rewrite it so that every one of them passes, and keep everything that was already right:");
+    lines.push(...feedback.map((f) => `- FAILED ${explainFlag(f)}`));
+    if (previous) lines.push("LAST ATTEMPT SUBJECT:", previous.subject, "LAST ATTEMPT BODY:", previous.body);
+  }
   return { system, prompt: lines.join("\n") };
 }
 
@@ -552,6 +630,9 @@ export const workflowFormSchema = z.object({
   countries_in_scope: z.string().default(""),
   tools_by_industry: z.string().default(""),
   reference_emails: z.string().default(""),
+  model_screen: z.string().trim().min(3, "Enter the quick-check model").max(100),
+  model_extract: z.string().trim().min(3, "Enter the facts model").max(100),
+  model_write: z.string().trim().min(3, "Enter the writing model").max(100),
 });
 export type WorkflowForm = z.infer<typeof workflowFormSchema>;
 
@@ -575,6 +656,7 @@ export function workflowFormToConfig(f: WorkflowForm, existing: WorkflowConfig):
     excluded_domains: lines(f.excluded_domains).map((d) => d.toLowerCase()), excluded_titles: lines(f.excluded_titles), banned_phrases: lines(f.banned_phrases),
     countries_in_scope: lines(f.countries_in_scope), tools_by_industry: parseTools(f.tools_by_industry),
     reference_emails: f.reference_emails.split(/\r?\n-{3,}\r?\n/).map((s) => s.trim()).filter(Boolean),
+    model_screen: f.model_screen, model_extract: f.model_extract, model_write: f.model_write,
   });
 }
 
@@ -584,6 +666,6 @@ export function workflowConfigToForm(c: WorkflowConfig): Record<string, string> 
     same_company_cooldown_days: String(c.same_company_cooldown_days), run_limit_minutes: String(c.run_limit_minutes), postal_address: c.postal_address, optout_line: c.optout_line,
     white_label_line: c.white_label_line, style_guide: c.style_guide, excluded_domains: c.excluded_domains.join("\n"), excluded_titles: c.excluded_titles.join("\n"),
     banned_phrases: c.banned_phrases.join("\n"), countries_in_scope: c.countries_in_scope.join("\n"), tools_by_industry: Object.entries(c.tools_by_industry).map(([k, v]) => `${k}: ${v}`).join("\n"),
-    reference_emails: c.reference_emails.join("\n---\n"),
+    reference_emails: c.reference_emails.join("\n---\n"), model_screen: c.model_screen, model_extract: c.model_extract, model_write: c.model_write,
   };
 }

@@ -8,7 +8,29 @@
 | 3 | CSV/XLSX import | DONE | 2026-10-26 |
 | CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
 | LIVE-1 | CSV runs, Gmail connection, live Claude/Serper/ZeroBounce/fetcher | built; adapters stay on mock until you switch them | 2026-10-27 |
+| LIVE-2 | Simple 4-page UI, Apollo as a main lead source, retry, email quality, gmail.modify label | built; Apollo needs your key | 2026-10-28 |
 | 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## LIVE-2 - simple UI, Apollo, retry, quality (2026-10-28)
+
+**The tool is four pages** (Home, Leads, Drafts, Setup). Everything else moved into them; the old addresses redirect. Half-built screens were removed from the UI (code and tables are kept): sending/approval screens, follow-ups, reply tracking, Crunchbase, the job and cost pages. See "Later".
+
+**Apollo is a main lead source, equal to CSV.** Campaign lead source = CSV, Apollo or Both (CSV leads first, Apollo fills what is missing). Filters: the campaign's roles, industries/keywords, countries and employee range, plus seniority and hiring (open jobs) for Apollo only. Built on Apollo's published API (docs.apollo.io), live adapter in `packages/adapters/src/live/apollo.ts`:
+- Company search (`mixed_companies/search`, 1 credit per page of 100, at most 3 pages a run) gives each company's website; people search (`mixed_people/api_search`, free, no emails, hidden last names) then finds the people there. Apollo's people search returns no company website, which is why the company search comes first.
+- Email reveal (`people/match`) is the only call that unlocks an email, for approved leads only, with personal emails, phone, waterfall and webhook switched off (the adapter refuses anything else), never twice per person, ledger row before and after, 70/day and 2000/month limits (editable). The company-search credits are recorded as usage and shown on Home but do not use up the reveal limits.
+- A test run never searches Apollo (it would cost a credit); "Find leads with Apollo" on the Leads page runs the search alone. In demo mode (no key) made-up people are allowed only while everything else is demo too: a real run never works on demo people.
+- Setup > Apollo account > Test connection: free checks only (key, people search access, whether the reveal call is reachable); a plan without API access gets a plain message.
+- Everything is tested with the demo adapter and with scripted Apollo responses; it has NOT been run against the real Apollo API yet (no key): that is the first thing to check once the key is in.
+
+**Retry** (Drafts > Needs attention): puts the lead back at the step that failed (writing, saving in Gmail, getting the email, research) and starts a run; earlier steps are kept so nothing already paid for runs again (`retryPatch` in core).
+
+**Email quality:** a rewrite is told the exact rules that failed, with the rule text, and sees its own last attempt. Each run reports how many emails were right the first time, after one rewrite, or not good enough (Home and the run log). The SRS rules were not loosened.
+
+**Gmail label:** the connection now asks for `gmail.compose` + `gmail.modify` (nothing else); a mailbox connected before shows "Reconnect needed" until reconnected. Drafts are created either way. Still no send code (architecture test kept). Draft message ids are stored so "Open in Gmail" opens the draft.
+
+**Skip email verification (testing only):** Setup > Advanced, off by default, yellow banner on Home while on. An address that is already known to be bad is still refused.
+
+**Funnel on Home** (Found -> Checked -> Researched -> Approved -> Drafted) is saved with each run (`totals.funnel`).
 
 ## LIVE-1 - CSV runs, Gmail connection, live Claude / Serper / ZeroBounce / page fetcher (2026-10-27)
 
@@ -22,17 +44,18 @@
 
 **Live adapters, one file each** (`ADAPTER_*` untouched, still mock): Claude (official `@anthropic-ai/sdk` 1.3.0, model from Settings), Serper, ZeroBounce (`VERIFIER_API_KEY` or `ZEROBOUNCE_API_KEY`), page fetcher. Settings > Connections has **Test connection** for Claude, Serper and ZeroBounce: one tiny real call through the same spend guard (price row required, caps checked, usage and cost recorded), whatever `ADAPTER_*` says.
 
+**OpenRouter option (2026-10-27):** `LLM_PROVIDER=anthropic|openrouter` (default anthropic) picks how Claude is reached when `ADAPTER_LLM=live`. OpenRouter: `POST https://openrouter.ai/api/v1/chat/completions`, `Authorization: Bearer OPENROUTER_API_KEY` (per OpenRouter's API reference; model slugs checked against its public `/api/v1/models`: `anthropic/claude-haiku-5.5`, `anthropic/claude-sonnet-5.5`). Same interface, retries (429/5xx, Retry-After), JSON checks and token counting; a 200 that carries an error is treated as an error. Settings keep Anthropic ids (`claude-haiku-5-5`); the app sends `anthropic/claude-haiku-5.5` to OpenRouter and converts back when switching to the Anthropic API, and an id with a slash is sent exactly as typed. The three model names (quick check + email check, facts, writing) are now editable under Settings > Daily run. Usage is recorded under provider `openrouter` (own price rows, own provider caps; global and campaign caps unchanged). Units are per model (`input_token@anthropic/claude-haiku-5.5`) so Haiku and Sonnet are costed at their own prices; a plain `input_token` row is the fallback. Cost always comes from the price table; OpenRouter's own figure is shown next to it on the test result only. Settings > Connections shows the provider, the models (and what is sent) and the price-row hint; Test connection uses the selected provider.
+
 **Tests added:** adapters (crypto, OAuth state, Gmail with a scripted fetch incl. two mailboxes, MIME, providers, fetcher/robots), web (callback/connect routes: forged state, wrong account, missing scope ...), worker (Test connection, no network), worker integration (CSV no-email and verify without credit; mailbox needs reconnect; revoke mid-run, other mailbox continues, resume), Playwright `google.spec.ts`.
 
 ## Later (deferred on purpose, in rough priority order)
 
-1. **Live adapters** (read each installed SDK's docs first): Anthropic (screen/extract on the cheap model, write on the strong model), Serper, the page fetcher (robots.txt, no paywalls/logins/CAPTCHAs), Apollo (search free; reveal with the REVEAL_FLAGS only), the email verifier, Gmail drafts (create draft in the right mailbox + label `AI-Outreach`). Each is a single file behind the existing interface; `ADAPTER_<NAME>=live` selects it. Enter the provider prices in Settings first: a live call without a price row is refused.
-2. (done in LIVE-1) Gmail OAuth connect screen.
-3. SRS 4.8 tracking and follow-ups; reply tracking; opt-out handling from replies.
-4. Crunchbase (still behind `CRUNCHBASE_ENABLED`, off).
-5. Sending UI (the send job, approval records and all guards exist and are tested; the screens are hidden and `SENDING_ENABLED` is off). The Review and Sending pages from Phase 2 still exist at /review and /sending but are not in the navigation.
-6. Full dashboard, funnel and cost reports; load tests; deployment hardening; pg-boss/Mastra migration (the DB-backed job runner is the engine now; the `pgboss` schema is installed but unused).
-7. Extra edge cases: per-mailbox targets with several mailboxes, SRS A4 weekly ramp-up, consent-risk country rules, LinkedIn (off), `over-quota` leads re-queued the next day.
+1. **Sending** (screens removed from the UI; the send job, approval records and all guards exist and are tested; `SENDING_ENABLED` is off and has no switch in the app).
+2. **Reply tracking and opt-out from replies** (SRS 4.8; the adapter method exists, the screens were removed).
+3. **Follow-ups** (SRS 4.8; table and view exist, no screen).
+4. **Crunchbase** (adapter slot and flag exist, off; never scraped).
+5. Full dashboard, funnel and cost reports; load tests; deployment hardening; pg-boss/Mastra migration (the DB-backed job runner is the engine now; the `pgboss` schema is installed but unused).
+6. Extra edge cases: per-mailbox targets with several mailboxes, SRS A4 weekly ramp-up, consent-risk country rules, LinkedIn (off), `over-quota` leads re-queued the next day.
 
 ## CORE - the automatic flow from docs/SRS.docx (2026-10-27)
 

@@ -1,66 +1,91 @@
 # AI Outreach Engine
 
-Research leads, draft personalised emails with evidence, and send **only after explicit human approval**.
-Read `CLAUDE.md` (rules), `docs/IMPLEMENTATION_PLAN.md` (phases) and `PROGRESS.md` (status) first.
+Finds leads, researches each company, writes a short personal email, and saves it as a **Gmail draft**.
+It never sends anything. You read the drafts in Gmail and send the good ones yourself.
 
-## Layout
+---
 
-| Path | Purpose |
-| --- | --- |
-| `apps/web` | Next.js app (App Router, Tailwind, shadcn/ui). `/api/health` reports DB + worker liveness. |
-| `apps/worker` | Long-running worker (heartbeat now; pg-boss + Mastra workflows from Phase 4). |
-| `packages/core` | Pure domain logic: normalisation, cost math, time. |
-| `packages/db` | Supabase clients (browser / server / service), generated types, heartbeat helpers. |
-| `packages/adapters` | Interfaces + mock (+ live) for llm, search, fetcher, crunchbase, apollo, verifier, gmail. |
-| `supabase/` | `migrations/` (the record of the schema), `seed.sql`, `tests/` (SQL suites). |
+## How to use (one page, no technical knowledge needed)
 
-## Run locally (zero external keys)
+The app has four pages: **Home**, **Leads**, **Drafts**, **Setup**.
+
+### 1. Set up once (Setup page, top to bottom)
+
+1. **Gmail mailboxes**: add the Gmail address the drafts should appear in, press **Connect Gmail**, and allow both permissions on the Google page. If a mailbox says **Reconnect needed**, press Reconnect once (it needs one more permission so the `AI-Outreach` label can be put on each draft).
+2. **Offer and case study**: what you sell, in a few plain words (add a real case study only if you have one; the app never invents numbers).
+3. **Email footer**: your postal address, the opt-out line and the white-label line. Real drafts are refused until the address and opt-out line are filled in.
+4. **Campaign**: who to write to (job titles, industries, countries, company size), where the leads come from (**CSV**, **Apollo** or **Both**), which offer, which mailbox, and how many drafts a day.
+5. *(Optional)* **Apollo account**: only if you want Apollo to find people. The key goes into the `.env` file (see "For the person who installs it"); then press Test connection.
+
+Home shows a **Getting started** checklist until all of this is done.
+
+### 2. Add leads (Leads page)
+
+- **Upload CSV**: choose the campaign, choose the file, check the columns, press **Import**. (Tick *Preview only* if you just want to see what would happen; nothing is saved then.)
+  Needs a first name, a company website and an email for each person.
+- **Find leads with Apollo**: choose an Apollo (or Both) campaign and press **Find leads now**. It only finds people; it does not write to anyone or use email credits.
+
+### 3. Start a run (Home page)
+
+- First press **Start test run (no drafts)** (tick *Test run*): it checks and scores your leads without writing drafts or using Apollo credits. Every run is marked **TEST** or **REAL**.
+- Then press **Start run**. For each lead it: removes people you must not contact, does a quick check, reads the company's website, keeps only facts it can quote word for word, scores the lead, gets and checks the email address, writes the email and saves the Gmail draft.
+- Home shows the progress (Found, Checked, Researched, Approved, Drafted), how many emails were right the first time, and your Apollo credits used today and this month.
+
+### 4. Read the drafts (Drafts page)
+
+- **Drafts**: every draft created, with **Open in Gmail**. Each draft starts with a bracketed `[AI note ...]` line: delete it before sending. Nothing is ever sent for you.
+- **Needs attention**: leads the app could not finish, with the reason in plain words. **Retry** puts the lead back at the step that failed (nothing already paid for is repeated). **Skip** removes it.
+
+### Good to know
+
+- Daily limits (drafts per day, Apollo email credits per day and month) are in Setup, and the app stops at them.
+- A person on your do-not-contact list is never written to, and Apollo is never asked for the same person's email twice.
+- Setup > **Advanced** (closed by default) holds prices, spending limits, writing rules, the connection tests and the *Skip email verification* switch (testing only: it shows a yellow warning on Home while it is on).
+- If something looks stuck, open the run from Home: it lists what happened at every step.
+
+---
+
+## For the person who installs it
+
+### Run locally
 
 ```bash
 pnpm install
-cp .env.example .env        # leave everything empty to run in mock mode
-pnpm dev                    # web on :3000, worker heartbeat
+cp .env.example .env        # fill in the keys you have; leave the rest empty (demo mode)
+pnpm dev                    # web on http://localhost:3000 and the background worker
 ```
 
-Open http://localhost:3000 - the badge turns green; `GET /api/health` returns the JSON report.
-Add the Supabase variables to `.env` to use the real dev database; the worker then writes `worker_heartbeats`.
+Restart `pnpm dev` after changing `.env`. Create the first user (sign-up is closed):
 
-## Try the core flow (mock mode, no keys, nothing real is sent)
+```bash
+pnpm user:create --email you@company.com --role admin   # prints a one-time password; or set ADMIN_* in .env and run it without flags
+```
 
-The workflow follows `docs/SRS.docx`. With the default `ADAPTER_*=mock` it searches mock Apollo people, checks and researches mock company sites, scores, "reveals" mock emails for the best leads and puts drafts in a mock Gmail. Real Gmail, Apollo and Anthropic arrive with the live adapters (see `PROGRESS.md` > Later).
+Keys live only in `.env` (never in the app): `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` (choose with `LLM_PROVIDER`), `SERPER_API_KEY`, `ZEROBOUNCE_API_KEY`, `APOLLO_API_KEY`, the Google keys, and `TOKEN_ENCRYPTION_KEY`.
+Each outside service has a switch `ADAPTER_<NAME>=mock|live` (default `mock`, which uses made-up data and calls nothing). Set `live` for `LLM`, `SEARCH`, `FETCHER`, `VERIFIER`, `GMAIL` (and `APOLLO`) only after the connection tests in Setup pass. Real research needs all three of `LLM`, `SEARCH`, `FETCHER` live.
+Details of the Google and Apollo setup steps are in `BLOCKERS.md`.
 
-1. `pnpm dev` (web on :3000 and the worker). Sign in as an admin.
-2. **Offers**: create an offer (name only is enough). **Mailboxes**: add a mailbox (any email, status Active, display name e.g. "Sam"). **Settings > Daily run**: fill *Postal address* and *Opt-out line* and press **Save run settings** (real drafts are refused without them).
-3. **Campaigns > New campaign**: name it, in step 1 set *Lead source* to **Apollo**, pick the offer and the mailbox, set *Daily cap* to e.g. 6, save.
-4. **Runs**: choose the campaign, tick **Dry run** for a first look (nothing is made), press **Start**, confirm. Then run it again without Dry run.
-5. Watch the row on **Runs** change step by step; open **Log** for the counts per step (search, clean, quick check, research and score, approve, reveal and verify, drafts) and why leads were skipped.
-6. The drafts: open the run (**Log**). **Gmail drafts from this run** lists every draft with its subject, recipient, score and full text (click a row). In mock mode the "Gmail" is a stand-in, so this list is where you read them; with the live Gmail adapter the same drafts appear in the mailbox under the label `AI-Outreach`, each with the bracketed note on top. Leads with a problem appear on **Needs attention**.
+### Layout
 
-## Live test: one Gmail account, 5 CSV leads (real services, drafts only, nothing is sent)
+| Path | Purpose |
+| --- | --- |
+| `apps/web` | The four pages (Next.js). `/api/health` reports database and worker liveness. |
+| `apps/worker` | Background worker: runs, imports, connection tests. |
+| `packages/core` | Rules and pure logic (scoring, checks, limits, retry). |
+| `packages/db` | Database clients, generated types. |
+| `packages/adapters` | Claude / OpenRouter, Serper, page fetcher, ZeroBounce, Apollo, Gmail (live) and the demo versions. |
+| `supabase/` | `migrations/` (the record of the schema), `tests/` (SQL suites). |
 
-Needs the Google Cloud steps D5 in `BLOCKERS.md` (redirect URI `http://localhost:3000/api/google/callback`, scopes `gmail.compose` + `gmail.labels`, your Gmail as a Test user) and the keys in `.env`. Keep every `ADAPTER_*` on `mock` until step 3.
+### Scripts
 
-1. **Gmail**: `pnpm dev`, sign in as admin, **Mailboxes > Add mailbox** (your Gmail address) > **Connect Gmail**, tick both permissions. Press **Create test draft**: a draft addressed to yourself appears in Gmail > Drafts (this works while `ADAPTER_GMAIL=mock`).
-2. **Providers**: **Settings > Price table**: one row per unit (anthropic `input_token` + `output_token`, serper `search`, verifier `verification`; use your plan's real prices). **Settings > Connections > Test connection** for Claude, Serper, ZeroBounce.
-3. **Go live** in `.env`: `ADAPTER_LLM=live`, `ADAPTER_SEARCH=live`, `ADAPTER_FETCHER=live`, `ADAPTER_VERIFIER=live`, `ADAPTER_GMAIL=live` (leave `ADAPTER_APOLLO=mock`), then restart `pnpm dev`.
-4. **CSV**: columns `First Name, Last Name, Title, Company, Website, Email`: five real small-company websites, and as the email your own address with a tag (`you+lead1@gmail.com` ...), so even a mistaken send only reaches you. **Campaigns > New campaign**: *Lead source* = CSV import, your mailbox. **Import** the file into it.
-5. **Runs**: tick **Dry run**, Start. Then Start again without Dry run. Drafts appear in the mailbox's Gmail Drafts; each begins with the bracketed `[AI note ...]` line to delete.
+`pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm e2e` (Playwright; run `pnpm --filter @outreach/web exec playwright install chromium` once) · `pnpm build` · `pnpm format`
 
-## First user
+### Rules the code keeps (see `CLAUDE.md`, `docs/SRS.docx`)
 
-Sign-up is closed; users are created by an admin: `pnpm user:create --email you@company.com --role admin` (prints a one-time password). `--disable` / `--enable` turns access off or on immediately.
+Drafts only (the one place that could send is switched off and has no screen); do-not-contact and suppression are checked at import, before research, before writing and before any send; every fact in an email is a stored quote from a page with its address and date; every paid call goes through the price table and spend caps; an Apollo email is revealed only for an approved lead, once per person, email only.
 
-## Scripts
+### Database tests
 
-`pnpm lint` · `pnpm typecheck` · `pnpm test` · `pnpm e2e` (Playwright, needs `pnpm --filter @outreach/web exec playwright install chromium` once) · `pnpm build` · `pnpm format`
+`supabase/tests/*.sql` are self-rolling-back suites (each ends with `raise exception 'SUITE_OK'`). With a real `DATABASE_URL`, `pnpm --filter @outreach/db test` runs them.
 
-## Adapters
-
-Each outside service is selected by `ADAPTER_<NAME>=mock|live` (default `mock`). Live mode checks its keys at startup and
-lists everything missing. A live adapter whose phase has not been built yet throws a clear error instead of silently doing nothing.
-Real sending needs `ADAPTER_GMAIL=live` **and** `ALLOW_LIVE_SEND=true`.
-
-## Database tests
-
-`supabase/tests/*.sql` are self-rolling-back suites (each ends with `raise exception 'SUITE_OK'`). With a real `DATABASE_URL`,
-`pnpm --filter @outreach/db test` runs them; otherwise run them through the Supabase MCP / SQL editor.
+See `PROGRESS.md` for what is built and what is left ("Later"), and `BLOCKERS.md` for what only you can do (keys, Google Cloud, Apollo plan).

@@ -8,7 +8,11 @@ type Paid = ReturnType<typeof import("../spend").makeSpender>;
 
 export type RevealOutcome = { ok: true; email: string; revealed: boolean } | { ok: false; reason: SkipReason; detail: string };
 
-/** Credits used so far today / this month (IST). Mock and live rows are counted separately so a test run never eats the real budget. */
+/**
+ * Email-reveal credits used so far today / this month (IST): this is what the daily and monthly limits count.
+ * Mock and live rows are counted separately so a test run never eats the real budget. (Apollo's company search also costs a credit per page:
+ * it is recorded as usage and shown on Home, and a run reads at most 3 pages, but it does not use up the reveal limits.)
+ */
 export async function creditsUsed(ctx: WorkerCtx, now = new Date()): Promise<{ today: number; month: number }> {
   const mock = ctx.modes.apollo === "mock";
   const sum = async (since: string) => {

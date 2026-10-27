@@ -4,6 +4,7 @@ import { refreshBatch } from "../pipeline/common";
 import { CapReachedError } from "../spend";
 import { runImportJob } from "./import";
 import { adapterTestJob } from "./adapter-test";
+import { apolloFindJob } from "./apollo-find";
 import { sendJob } from "./send";
 import { workflowRunJob } from "./run";
 
@@ -24,6 +25,7 @@ export const HANDLERS: Record<string, Handler> = {
   "workflow.run": workflowRunJob as Handler,
   "send.run": sendJob as Handler,
   "adapter.test": adapterTestJob as Handler,
+  "apollo.find": apolloFindJob as Handler,
 };
 
 /** Puts jobs back in the queue when the worker that held them stopped without finishing. */

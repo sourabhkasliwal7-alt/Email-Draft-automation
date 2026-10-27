@@ -41,3 +41,39 @@ export async function cleanupImportData() {
   }
   if (paths.length) await admin.storage.from("imports").remove(paths);
 }
+
+/**
+ * Removes what simple.spec.ts seeds (tag "e2esimple"): campaigns, leads, runs, drafts, jobs, mailboxes and people.
+ * Same technique as above: a direct connection with triggers off for one transaction, only rows that carry the tag.
+ */
+export async function cleanupSimpleData() {
+  if (!/^postgres(ql)?:\/\//.test(process.env.DATABASE_URL ?? "")) {
+    console.warn("[e2e] DATABASE_URL is not set: simple-flow test data (tag e2esimple) was NOT removed.");
+    return;
+  }
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  try {
+    await client.query("begin");
+    await client.query("set local session_replication_role = replica");
+    const like = "%e2esimple%";
+    const campaigns = `(select id from public.campaigns where name like $1)`;
+    const leads = `(select id from public.campaign_leads where campaign_id in ${campaigns})`;
+    await client.query(`delete from public.email_drafts where campaign_lead_id in ${leads}`, [like]);
+    await client.query(`delete from public.lead_events where campaign_lead_id in ${leads}`, [like]);
+    await client.query(`delete from public.jobs where campaign_id in ${campaigns} or idempotency_key like $1`, [like]);
+    await client.query(`delete from public.pipeline_batches where campaign_id in ${campaigns}`, [like]);
+    await client.query(`delete from public.campaign_leads where campaign_id in ${campaigns}`, [like]);
+    await client.query(`delete from public.contacts where email_lower like $1 or company_name like $1 or full_name like $1 or last_name like $1`, [like]);
+    await client.query(`delete from public.companies where domain like $1 or name like $1`, [like]);
+    await client.query(`delete from public.campaigns where name like $1`, [like]);
+    await client.query(`delete from public.inboxes where email like $1`, [like]);
+    await client.query(`delete from public.audit_log where payload::text like $1`, [like]);
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  } finally {
+    await client.end();
+  }
+}

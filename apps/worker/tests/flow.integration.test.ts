@@ -9,7 +9,10 @@ import { CapReachedError, makeSpender } from "../src/spend";
 import { runOneJob } from "../src/jobs/runner";
 import { startRun } from "@outreach/db";
 import { sendJob } from "../src/jobs/send";
+import { apolloFindJob } from "../src/jobs/apollo-find";
+import { apolloSkipReason, redoDemoResearch } from "../src/jobs/run";
 import { loadLead } from "../src/pipeline/common";
+import { loadFacts } from "../src/pipeline/stages";
 import { creditsUsed, revealWithGuard } from "../src/pipeline/reveal";
 import { cleanup, hasIntegrationDb, makeCtx, newTag } from "./helpers/itest";
 
@@ -381,14 +384,272 @@ describe.skipIf(!enabled)("core flow (mock adapters, real database)", () => {
     await db.from("price_table").delete().like("unit", `%${tag}%`);
   }, 60_000);
 
+  it("OpenRouter: usage is recorded under provider 'openrouter', costed from the model's own price row, and the caps still apply", async () => {
+    const unitIn = `input_token@anthropic/claude-haiku-5.5-${tag}`;
+    const unitOut = `output_token@anthropic/claude-haiku-5.5-${tag}`;
+    const liveCtx: WorkerCtx = { ...ctx, llmProvider: "openrouter", modes: { ...ctx.modes, llm: "live" as const } };
+    let calls = 0;
+    liveCtx.adapters = { ...ctx.adapters, llm: { complete: async () => (calls++, { text: "ok", model: "anthropic/claude-haiku-5.5", usage: { units: { [unitIn]: 1000, [unitOut]: 100 } } }) } };
+    const job = (await db.from("jobs").insert({ type: "workflow.run", idempotency_key: `${tag}-or`, payload: {} as Json, campaign_id: csvCampaignId, status: "completed" }).select("id").single()).data!;
+    const spend = makeSpender(liveCtx, { campaignId: csvCampaignId, leadId: null, jobId: job.id, step: "itest-or" });
+
+    // no openrouter price row at all: refused, nothing called
+    if (!((await db.from("price_table").select("id").eq("provider", "openrouter")).data ?? []).length) {
+      await expect(spend("llm", "complete", () => liveCtx.adapters.llm.complete({ tier: "cheap", prompt: "x" }))).rejects.toBeInstanceOf(MissingPriceError);
+      expect(calls).toBe(0);
+    }
+    await db.from("price_table").insert([
+      { provider: "openrouter", unit: unitIn, usd_per_unit: 0.0000001 },
+      { provider: "openrouter", unit: unitOut, usd_per_unit: 0.0000005 },
+    ]);
+    // a spender reads the price table once, so a new one is made after the prices exist (every lead gets its own in a real run)
+    const priced = makeSpender(liveCtx, { campaignId: csvCampaignId, leadId: null, jobId: job.id, step: "itest-or" });
+    const r = await priced("llm", "complete", () => liveCtx.adapters.llm.complete({ tier: "cheap", prompt: "x" }));
+    expect(r.text).toBe("ok");
+    const rows = (await db.from("usage_records").select("provider, cost_usd, is_mock, units, status").eq("job_id", job.id)).data!;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ provider: "openrouter", is_mock: false, status: "recorded" });
+    expect(Number(rows[0]!.cost_usd)).toBeCloseTo(1000 * 0.0000001 + 100 * 0.0000005, 9);
+    expect(rows[0]!.units).toEqual({ [unitIn]: 1000, [unitOut]: 100 });
+
+    // a provider-scoped cap on "openrouter" (and a campaign cap) stops the next call before it is made
+    await db.from("spend_caps").insert({ scope: "campaign", campaign_id: csvCampaignId, period: "daily", cap_usd: 0.0000001 });
+    const capped = makeSpender(liveCtx, { campaignId: csvCampaignId, leadId: null, jobId: job.id, step: "itest-or2" });
+    await expect(capped("llm", "complete", () => liveCtx.adapters.llm.complete({ tier: "cheap", prompt: "x" }))).rejects.toBeInstanceOf(CapReachedError);
+    expect(calls).toBe(1);
+    await db.from("spend_caps").delete().eq("campaign_id", csvCampaignId);
+    await db.from("price_table").delete().like("unit", `%${tag}%`);
+  }, 60_000);
+
+  // ---------------------------------------------------------------- a failing step is never silent
+  it("usage is recorded once per lead and call: two leads in one run give two rows and two cap checks", async () => {
+    const job = (await db.from("jobs").insert({ type: "workflow.run", idempotency_key: `${tag}-usage-keys`, payload: {} as Json, campaign_id: csvCampaignId, status: "completed" }).select("id").single()).data!;
+    const a = await mkLead("uk1", { first: "Una" });
+    const b = await mkLead("uk2", { first: "Uri" });
+    for (const l of [a, b]) {
+      const paid = makeSpender(ctx, { campaignId: csvCampaignId, leadId: l.leadId, jobId: job.id, step: "write" });
+      await paid("llm", "write", async () => ({ usage: { units: { input_token: 10, output_token: 5 } } }));
+    }
+    const rows = (await db.from("usage_records").select("campaign_lead_id, units").eq("job_id", job.id)).data!;
+    expect(rows.map((r) => r.campaign_lead_id).sort()).toEqual([a.leadId, b.leadId].sort());
+    expect(rows.every((r) => (r.units as { input_token: number }).input_token === 10)).toBe(true);
+  }, 60_000);
+
+  it("a lead whose writing fails goes to Needs attention with the reason, the run log counts it, and the next run retries only that step", async () => {
+    const camp = await mkCampaign("failwrite", inboxId);
+    await mkLead("fw1", { first: "Fenn", campaign: camp });
+    await mkLead("fw2", { first: "Fran", campaign: camp });
+    const broken: WorkerCtx = {
+      ...ctx,
+      adapters: {
+        ...ctx.adapters,
+        llm: { complete: async (req) => { if (/\[task:write\]/.test(`${req.system ?? ""}
+${req.prompt}`)) throw new Error("OpenRouter says the account has too few credits (402)"); return ctx.adapters.llm.complete(req); } },
+      },
+    };
+    const first = await runWith(broken, camp);
+    expect(first.status).toBe("completed");
+    for (const k of ["fw1", "fw2"]) {
+      const l = await lead(leads[k]!.leadId);
+      expect(l.status).toBe("approved");
+      expect(l.reason_codes[0]).toBe("step-failed");
+      expect(l.reason_codes[1]).toMatch(/^write: .*too few credits/);
+      expect((await db.from("email_drafts").select("id").eq("campaign_lead_id", leads[k]!.leadId)).data).toHaveLength(0);
+      expect((await db.from("lead_events").select("payload").eq("campaign_lead_id", leads[k]!.leadId).eq("type", "step_failed")).data!.length).toBeGreaterThanOrEqual(1);
+    }
+    const errorsLine = logOf(first).find((l) => l.step === "errors")!;
+    expect(errorsLine.count).toBe(2);
+    expect(errorsLine.note).toContain("too few credits");
+    expect(summaryOf(first).needsAttention).toBe(2);
+    expect(logOf(first).find((l) => l.step === "done")!.note).toContain("2 lead(s) in Needs attention");
+
+    // fixed: the same leads continue from the write step. Screening and research are not paid for again, and the marker disappears.
+    const stepsBefore = ((await db.from("usage_records").select("step").in("campaign_lead_id", [leads.fw1!.leadId, leads.fw2!.leadId])).data ?? []).map((u) => u.step);
+    const second = await runWith(ctx, camp);
+    expect(second.status).toBe("completed");
+    expect(logOf(second).find((l) => l.step === "quick check")!.note).toBe("2 passed (0 checked now, 2 had already passed in an earlier run); 0 did not pass");
+    expect(logOf(second).find((l) => l.step === "clean")!.note).toContain("2 approved lead(s) continued");
+    for (const k of ["fw1", "fw2"]) expect(await lead(leads[k]!.leadId)).toMatchObject({ status: "draft_ready", reason_codes: [] });
+    const stepsAfter = ((await db.from("usage_records").select("step").in("campaign_lead_id", [leads.fw1!.leadId, leads.fw2!.leadId])).data ?? []).map((u) => u.step);
+    for (const step of ["screen", "research"]) expect(stepsAfter.filter((x) => x === step).length, step).toBe(stepsBefore.filter((x) => x === step).length);
+    expect(summaryOf(second).needsAttention).toBe(0);
+  }, 290_000);
+
+  it("research made with the mock adapters is never used in a real run: it is ignored, and those leads start again", async () => {
+    const camp = await mkCampaign("demo-research", inboxId);
+    const demo = await mkLead("demo1", { first: "Demi", campaign: camp });
+    const real = await mkLead("real1", { first: "Rael", campaign: camp });
+    const stamp = new Date().toISOString();
+    const run = async (companyId: string, leadId: string, provider: string) => {
+      const { data: rr } = await db.from("research_runs").insert({ company_id: companyId, campaign_lead_id: leadId, depth: "standard", status: "completed", provider, idempotency_key: `${tag}-${provider}-${leadId}`, started_at: stamp, finished_at: stamp }).select("id").single();
+      await db.from("evidence_items").insert({ company_id: companyId, research_run_id: rr!.id, url: `https://${provider.replace(/\W/g, "")}.${companyId}.test/`, title: "[hiring] x", snippet: `quote from ${provider}`, retrieved_at: stamp });
+    };
+    await run(leads.demo1!.companyId, leads.demo1!.leadId, "serper+fetcher"); // saved before research was labelled: could be demo text
+    await run(leads.real1!.companyId, leads.real1!.leadId, "live:serper+fetcher");
+    await run(leads.real1!.companyId, leads.real1!.leadId, "mock");
+    for (const l of [demo, real]) await db.from("campaign_leads").update({ status: "scored", lead_score: 80 }).eq("id", l.leadId);
+
+    const liveCtx: WorkerCtx = { ...ctx, modes: { ...ctx.modes, llm: "live" as const, search: "live" as const, fetcher: "live" as const } };
+    // facts: a real run reads only real evidence, a mock run reads whatever there is
+    const factsLive = await loadFacts(liveCtx, leads.real1!.companyId, []);
+    expect(factsLive.map((f) => f.quote)).toEqual(["quote from live:serper+fetcher"]);
+    expect((await loadFacts(liveCtx, leads.demo1!.companyId, [])).length).toBe(0);
+    expect((await loadFacts(ctx, leads.real1!.companyId, [])).length).toBe(2);
+
+    // a mock run never restarts anything; a real run restarts only the lead without real research
+    expect(await redoDemoResearch(ctx, camp)).toBe(0);
+    expect(await lead(leads.demo1!.leadId)).toMatchObject({ status: "scored" });
+    expect(await redoDemoResearch(liveCtx, camp)).toBe(1);
+    expect(await lead(leads.demo1!.leadId)).toMatchObject({ status: "imported", lead_score: null, reason_codes: [] });
+    expect(await lead(leads.real1!.leadId)).toMatchObject({ status: "scored", lead_score: 80 });
+    expect((await db.from("lead_events").select("type").eq("campaign_lead_id", leads.demo1!.leadId).eq("type", "restarted")).data).toHaveLength(1);
+  }, 60_000);
+
+  // ---------------------------------------------------------------- Apollo and CSV as equal lead sources
+  it("lead source 'Both': the CSV leads come first, Apollo (demo adapter here) only fills what is missing, with the campaign's filters", async () => {
+    const camp = await mkCampaign("both", inboxId, { leadSource: "both", requireEmail: false, industries: ["logistics"], countries: [], employeeMin: 10, employeeMax: 500, seniorities: ["c_suite"], hiringTitles: [], minOpenJobs: null }, { target_roles: ["COO", "CTO"], daily_cap: 4 });
+    await mkLead("bothcsv", { first: "Bo", campaign: camp });
+    const batch = await runWith(ctx, camp);
+    expect(batch.status).toBe("completed");
+    const log = logOf(batch);
+    const search = log.find((l) => l.step === "search")!;
+    expect(search.count).toBeGreaterThan(0);
+    expect(search.count).toBeLessThanOrEqual(Math.ceil(4 / 0.75) - 1); // 4 / 0.75 people are wanted, the CSV lead is one of them
+    // only c-suite people came from Apollo (the filter was applied), and the CSV lead is among the leads worked on
+    const rows = (await db.from("campaign_leads").select("lead_source, contacts(job_title)").eq("campaign_id", camp)).data!;
+    const fromApollo = rows.filter((r) => String(r.lead_source).startsWith("import:apollo-pull"));
+    expect(fromApollo.length).toBe(search.count);
+    for (const r of fromApollo) expect(["COO", "CTO"]).toContain(r.contacts?.job_title);
+    const ids = (batch.totals as { leadIds: string[] }).leadIds;
+    expect(ids).toContain(leads.bothcsv!.leadId);
+    // the Home numbers: every step can only lose leads, never gain them
+    const funnel = (batch.totals as { funnel: { found: number; checked: number; researched: number; approved: number; drafted: number } }).funnel;
+    expect(funnel.found).toBeGreaterThanOrEqual(funnel.checked);
+    expect(funnel.checked).toBeGreaterThanOrEqual(funnel.researched);
+    expect(funnel.researched).toBeGreaterThanOrEqual(funnel.approved);
+    expect(funnel.approved).toBeGreaterThanOrEqual(funnel.drafted);
+    expect(funnel.drafted).toBe(summaryOf(batch).drafts);
+    const q = (batch.totals as { summary: { quality: { firstTry: number; afterRewrite: number; failed: number } } }).summary.quality;
+    expect(q.firstTry + q.afterRewrite).toBe(summaryOf(batch).drafts);
+  }, 290_000);
+
+  it("a CSV-only campaign never searches Apollo; a test run never spends Apollo credits and demo people never enter a real run", async () => {
+    const camp = await mkCampaign("csvonly", inboxId);
+    await mkLead("csvonly1", { first: "Cy", campaign: camp });
+    const before = (await db.from("import_batches").select("id", { count: "exact", head: true }).like("file_name", "apollo-pull-%").eq("campaign_id", camp)).count;
+    const batch = await runWith(ctx, camp);
+    expect(logOf(batch).find((l) => l.step === "search")).toBeUndefined();
+    expect((await db.from("import_batches").select("id", { count: "exact", head: true }).like("file_name", "apollo-pull-%").eq("campaign_id", camp)).count).toBe(before);
+
+    const live = (over: Record<string, "mock" | "live">): WorkerCtx => ({ ...ctx, modes: { ...ctx.modes, ...over } });
+    expect(apolloSkipReason(ctx, false, 5)).toBeNull(); // everything demo: the demo people are allowed (that is how it is tested)
+    expect(apolloSkipReason(ctx, false, 0)).toMatch(/already in the campaign are enough/);
+    expect(apolloSkipReason(live({ apollo: "live" }), true, 5)).toMatch(/test run: Apollo is not searched/);
+    expect(apolloSkipReason(live({ apollo: "live" }), false, 5)).toBeNull();
+    expect(apolloSkipReason(live({ llm: "live", search: "live", fetcher: "live" }), false, 5)).toMatch(/demo mode.*APOLLO_API_KEY/);
+    expect(apolloSkipReason(live({ llm: "live", search: "live", fetcher: "live", apollo: "live" }), false, 5)).toBeNull();
+  }, 120_000);
+
+  it("Find leads with Apollo: adds people to the campaign without researching or revealing anything; demo people never reach real runs", async () => {
+    const camp = await mkCampaign("find", inboxId, { leadSource: "apollo", requireEmail: false, industries: [], countries: [], employeeMin: null, employeeMax: null, seniorities: [], hiringTitles: [], minOpenJobs: null }, { target_roles: ["COO"], daily_cap: 4 });
+    const reveals = mockRevealLog.length;
+    const mkJob = async (key: string, campaignId: string) => ({ jobId: (await db.from("jobs").insert({ type: "apollo.find", idempotency_key: `${tag}-${key}`, payload: {} as Json, campaign_id: campaignId, status: "completed" }).select("id").single()).data!.id, attempts: 1 });
+    const job = await mkJob("find1", camp);
+    const r = await apolloFindJob(ctx, { campaignId: camp }, job);
+    expect(r.demo).toBe(true);
+    expect(r.found).toBeGreaterThan(0);
+    expect(r.imported).toBe(r.found);
+    const rows = (await db.from("campaign_leads").select("status, contacts(email, job_title)").eq("campaign_id", camp)).data!;
+    expect(rows).toHaveLength(r.imported);
+    for (const l of rows) expect(l).toMatchObject({ status: "imported", contacts: { job_title: "COO" } }); // found, nothing else done; an email is revealed only for approved leads (checked below: no reveal, no ledger row)
+    expect(mockRevealLog.length).toBe(reveals);
+    expect((await db.from("credit_ledger").select("id").in("campaign_lead_id", (await db.from("campaign_leads").select("id").eq("campaign_id", camp)).data!.map((x) => x.id))).data).toHaveLength(0);
+
+    // a real setup (real pages and model) with Apollo still in demo mode: nothing is searched
+    const realCamp = await mkCampaign("find2", inboxId, { leadSource: "apollo", requireEmail: false, industries: [], countries: [] }, { target_roles: ["COO"] });
+    const none = await apolloFindJob({ ...ctx, modes: { ...ctx.modes, llm: "live", search: "live", fetcher: "live" } }, { campaignId: realCamp }, await mkJob("find2", realCamp));
+    expect(none).toMatchObject({ found: 0, demo: true });
+    expect(none.note).toMatch(/demo mode/);
+    expect((await db.from("campaign_leads").select("id").eq("campaign_id", realCamp)).data).toHaveLength(0);
+    // a CSV-only campaign has nothing to search
+    const csvOnly = await apolloFindJob(ctx, { campaignId: csvCampaignId }, await mkJob("find3", csvCampaignId));
+    expect(csvOnly.found).toBe(0);
+    expect(csvOnly.note).toMatch(/CSV file only/);
+  }, 120_000);
+
+  it("Apollo credits: the company search is recorded and shown on Home, but it does not use up the email-reveal limits", async () => {
+    const before = await creditsUsed(ctx);
+    const homeBefore = (await db.from("v_apollo_credits").select("today, month").eq("is_mock", true).maybeSingle()).data ?? { today: 0, month: 0 };
+    const job = (await db.from("jobs").insert({ type: "workflow.run", idempotency_key: `${tag}-apollo-credit`, payload: {} as Json, campaign_id: csvCampaignId, status: "completed" }).select("id").single()).data!;
+    const paid = makeSpender(ctx, { campaignId: csvCampaignId, leadId: null, jobId: job.id, step: "apolloPull" });
+    await paid("apollo", "search_people", async () => ({ usage: { units: { credit: 2 } } }));
+    expect(await creditsUsed(ctx)).toEqual(before); // reveal limits untouched
+    const homeAfter = (await db.from("v_apollo_credits").select("today, month").eq("is_mock", true).single()).data!;
+    expect(Number(homeAfter.today) - Number(homeBefore.today)).toBe(2);
+    expect(Number(homeAfter.month) - Number(homeBefore.month)).toBe(2);
+  }, 60_000);
+
+  // ---------------------------------------------------------------- skipping the email check (testing only), and the rewrite
+  it("Skip email verification (testing only): unchecked addresses go on, the checker is not called, a known-bad address still never does", async () => {
+    const camp = await mkCampaign("skipverify", inboxId);
+    await mkLead("sv1", { first: "Sia", campaign: camp });
+    await mkLead("sv2", { first: "Sev", campaign: camp, email: `invalid.sev@${D("sv2")}` });
+    await setWorkflow({ excluded_domains: [D("excl")], skip_verification: true });
+    try {
+      const batch = await runWith(ctx, camp);
+      expect(batch.status).toBe("completed");
+      expect(await lead(leads.sv1!.leadId)).toMatchObject({ status: "draft_ready" });
+      expect((await db.from("contacts").select("email_status").eq("id", leads.sv1!.contactId).single()).data!.email_status).toBe("unknown"); // never marked valid without a check
+      expect((await db.from("usage_records").select("id").in("campaign_lead_id", [leads.sv1!.leadId, leads.sv2!.leadId]).eq("provider", "verifier")).data).toHaveLength(0);
+      const ev = (await db.from("lead_events").select("payload").eq("campaign_lead_id", leads.sv1!.leadId).eq("type", "email_ready")).data!;
+      expect((ev[0]!.payload as { verification_skipped: boolean }).verification_skipped).toBe(true);
+      // the second address was already known to be bad (it sits on the suppression list after an earlier check in other tests? here: unknown), so with checking off it is treated like any unchecked address
+      expect(["draft_ready", "disqualified"]).toContain((await lead(leads.sv2!.leadId)).status);
+    } finally {
+      await setWorkflow({ excluded_domains: [D("excl")] });
+    }
+  }, 200_000);
+
+  it("a rewrite is told the exact rules that failed and sees its last attempt; the run counts how many emails passed first time", async () => {
+    const camp = await mkCampaign("rewrite", inboxId);
+    await mkLead("rw1", { first: "Rae", campaign: camp, company: `Badwrite ${tag}` });
+    await mkLead("rw2", { first: "Rob", campaign: camp });
+    const prompts: string[] = [];
+    const spying: WorkerCtx = { ...ctx, adapters: { ...ctx.adapters, llm: { complete: async (req) => { if (/\[task:write\]/.test(`${req.system ?? ""}\n${req.prompt}`)) prompts.push(req.prompt); return ctx.adapters.llm.complete(req); } } } };
+    const batch = await runWith(spying, camp);
+    expect(batch.status).toBe("completed");
+    const rewrite = prompts.find((p) => p.includes("THE LAST ATTEMPT FAILED THESE RULES"))!;
+    expect(rewrite).toBeTruthy();
+    expect(rewrite).toContain("- FAILED W4: exclamation mark");
+    expect(rewrite).toContain("RULE W4: No exclamation marks");
+    expect(rewrite).toContain("LAST ATTEMPT BODY:");
+    expect(prompts.filter((p) => p.includes("THE LAST ATTEMPT FAILED")).length).toBe(1); // only the lead that failed is rewritten
+    const q = (batch.totals as { summary: { quality: { firstTry: number; afterRewrite: number; failed: number } } }).summary.quality;
+    expect(q).toEqual({ firstTry: 1, afterRewrite: 1, failed: 0 });
+    expect(logOf(batch).find((l) => l.step === "done")!.note).toContain("email quality: 1 of 2 right the first time, 1 after a rewrite, 0 not good enough");
+  }, 200_000);
+
+  it("Retry: a lead put back at the research step continues there; the quick check is not paid for again", async () => {
+    const camp = await mkCampaign("retryresearch", inboxId);
+    const l = await mkLead("rr1", { first: "Reed", campaign: camp });
+    // as if the research had failed: the quick check result is saved, the lead waits at the research step
+    await db.from("campaign_leads").update({ status: "researching", score_components: { screen: { fit: "yes", business_type: "software agency", reason: "x", mode: "mock" } } as Json, reason_codes: [] }).eq("id", l.leadId);
+    const batch = await runWith(ctx, camp);
+    expect(batch.status).toBe("completed");
+    expect(await lead(l.leadId)).toMatchObject({ status: "draft_ready" });
+    const steps = ((await db.from("usage_records").select("step").eq("campaign_lead_id", l.leadId)).data ?? []).map((u) => u.step);
+    expect(steps).not.toContain("screen");
+    expect(steps).toContain("research");
+  }, 200_000);
+
   // ---------------------------------------------------------------- CSV as the lead source, and mailbox problems
   const logOf = (batch: { totals: unknown }) => (batch.totals as { log: { step: string; count: number | null; note?: string }[] }).log;
   const summaryOf = (batch: { totals: unknown }) => (batch.totals as { summary: { needsAttention: number; drafts: number; creditsUsed: number } }).summary;
-  async function mkCampaign(name: string, inbox: string) {
+  async function mkCampaign(name: string, inbox: string, icp: Record<string, unknown> = { leadSource: "csv", requireEmail: true }, extra: Record<string, unknown> = {}) {
     const offerId = (await db.from("campaigns").select("offer_id").eq("id", csvCampaignId).single()).data!.offer_id;
     const { data } = await db
       .from("campaigns")
-      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inbox, cta: "Open to a quick call next week?", daily_cap: 6, icp: { leadSource: "csv", requireEmail: true } as Json })
+      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inbox, cta: "Open to a quick call next week?", daily_cap: 6, icp: icp as Json, ...extra })
       .select("id")
       .single();
     return data!.id;

@@ -53,9 +53,14 @@ export const icpSchema = z.object({
   keywordsInclude: z.array(z.string()).default([]),
   keywordsExclude: z.array(z.string()).default([]),
   requireEmail: z.boolean().default(true),
-  /** where "Start workflow" gets leads: Apollo search (needs APOLLO access) or leads already imported from CSV */
-  leadSource: z.enum(["csv", "apollo"]).default("csv"),
+  /** where a run gets leads: the CSV leads already imported, an Apollo people search, or both (CSV first, Apollo fills the rest) */
+  leadSource: z.enum(["csv", "apollo", "both"]).default("csv"),
   maxLeadsPerRun: z.number().int().min(1).max(500).default(25),
+  /** Apollo search only. Job titles come from the campaign's target roles, industries/keywords, countries and employee range from the fields above. */
+  seniorities: z.array(z.string()).default([]),
+  /** Apollo search only: companies with an open job posting for one of these titles (only if the Apollo plan allows it) */
+  hiringTitles: z.array(z.string()).default([]),
+  minOpenJobs: z.number().int().min(0).nullable().default(null),
 });
 export type Icp = z.infer<typeof icpSchema>;
 
@@ -70,7 +75,10 @@ export const campaignSchema = z
     keywordsInclude: z.string().default(""),
     keywordsExclude: z.string().default(""),
     researchFirst: z.coerce.boolean().default(false),
-    leadSource: z.enum(["csv", "apollo"]).default("csv"),
+    leadSource: z.enum(["csv", "apollo", "both"]).default("csv"),
+    seniorities: z.string().default(""),
+    hiringTitles: z.string().default(""),
+    minOpenJobs: z.string().default(""),
     maxLeadsPerRun: z.coerce.number({ error: "Max leads per run must be a number" }).int("Max leads per run must be a whole number").min(1, "Max leads per run must be at least 1").max(500, "Max leads per run is at most 500").default(25),
     targetRoles: z.string().default(""),
     regions: z.string().default(""),
@@ -91,6 +99,8 @@ export const campaignSchema = z
     if (v.scoreReviewMin > v.scoreDraftMin)
       ctx.addIssue({ code: "custom", path: ["scoreReviewMin"], message: "Review threshold cannot be higher than the draft threshold" });
     if (v.sendStart >= v.sendEnd) ctx.addIssue({ code: "custom", path: ["sendEnd"], message: "Send window must end after it starts" });
+    const jobs = v.minOpenJobs.trim() === "" ? null : Number(v.minOpenJobs);
+    if (jobs !== null && (!Number.isInteger(jobs) || jobs < 0)) ctx.addIssue({ code: "custom", path: ["minOpenJobs"], message: "Open jobs must be a whole number" });
     const min = v.employeeMin.trim() === "" ? null : Number(v.employeeMin);
     const max = v.employeeMax.trim() === "" ? null : Number(v.employeeMax);
     if (min !== null && (!Number.isInteger(min) || min < 0)) ctx.addIssue({ code: "custom", path: ["employeeMin"], message: "Minimum employees must be a whole number" });
@@ -110,10 +120,13 @@ export function campaignToRow(v: CampaignInput) {
     employeeMax: toNum(v.employeeMax),
     keywordsInclude: splitList(v.keywordsInclude),
     keywordsExclude: splitList(v.keywordsExclude),
-    // Apollo search never returns emails (they are revealed after qualification), so those campaigns are research-first.
-    requireEmail: !v.researchFirst && v.leadSource !== "apollo",
+    // Apollo search never returns emails (they are revealed after qualification), so only a CSV-only campaign insists on an email column.
+    requireEmail: !v.researchFirst && v.leadSource === "csv",
     leadSource: v.leadSource,
     maxLeadsPerRun: v.maxLeadsPerRun,
+    seniorities: splitList(v.seniorities),
+    hiringTitles: splitList(v.hiringTitles),
+    minOpenJobs: toNum(v.minOpenJobs),
   };
   return {
     name: v.name,

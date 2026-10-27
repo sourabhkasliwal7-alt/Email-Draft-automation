@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
-import { SKIP_LABELS, formatKolkata, type SkipReason } from "@outreach/core";
+import { formatKolkata } from "@outreach/core";
+import { BackLink, RunModeBadge } from "@/components/bits";
 import { Badge, EmptyState, PageHeader } from "@/components/page-header";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PAUSE_TEXT, STATUS_TONE } from "../labels";
+import { PLAIN_PAUSE, plainReason } from "@/lib/plain";
+import { STATUS_TONE } from "../labels";
 
 interface Totals {
   target?: number;
@@ -18,6 +20,7 @@ interface Totals {
     skipped: Record<string, number>;
     byStatus: Record<string, number>;
     needsAttention: number;
+    quality?: { firstTry?: number; afterRewrite?: number; failed?: number };
   };
 }
 
@@ -38,15 +41,18 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
   const t = (run.totals ?? {}) as Totals;
   const s = t.summary;
   const detail = (run.pause_detail ?? {}) as { problems?: string[]; error?: string };
+  const test = (run.estimate as { dryRun?: boolean } | null)?.dryRun === true || (t as { dryRun?: boolean }).dryRun === true || s?.dryRun === true;
   return (
     <>
+      <BackLink href="/">Home</BackLink>
       <PageHeader
         title={`Run: ${run.campaigns?.name ?? ""}`}
         description={`Started ${formatKolkata(run.started_at)} (IST)${run.finished_at ? `, finished ${formatKolkata(run.finished_at)}` : ""}`}
       />
       <p className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+        <RunModeBadge test={test} />
         <Badge tone={STATUS_TONE[run.status] ?? "neutral"}>{run.status}</Badge>
-        {run.pause_reason && <span className="text-zinc-600">{PAUSE_TEXT[run.pause_reason] ?? run.pause_reason}</span>}
+        {run.pause_reason && <span className="text-zinc-600">{PLAIN_PAUSE[run.pause_reason] ?? run.pause_reason}</span>}
         {detail.problems?.map((p) => (
           <span key={p} className="text-red-700">
             {p}
@@ -60,7 +66,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
             [
               ["Gmail drafts", `${s.drafts}${t.target != null ? ` / ${t.target}` : ""}`],
               ["Leads worked", s.leads],
-              ["Reveal credits", s.creditsUsed],
+              ["Email credits used", s.creditsUsed],
               ["Needs attention", s.needsAttention],
             ] as const
           ).map(([label, v]) => (
@@ -70,6 +76,11 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
             </div>
           ))}
         </div>
+      )}
+      {s?.quality && (s.quality.firstTry ?? 0) + (s.quality.afterRewrite ?? 0) + (s.quality.failed ?? 0) > 0 && (
+        <p className="mb-6 text-sm" data-testid="run-quality">
+          Email quality: {s.quality.firstTry ?? 0} of {(s.quality.firstTry ?? 0) + (s.quality.afterRewrite ?? 0) + (s.quality.failed ?? 0)} passed first time, {s.quality.afterRewrite ?? 0} after one rewrite, {s.quality.failed ?? 0} need attention.
+        </p>
       )}
       <h2 className="mb-2 text-lg font-semibold">Gmail drafts from this run</h2>
       {!drafts?.length ? (
@@ -123,13 +134,13 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
           </tbody>
         </table>
       )}
-      {s && Object.keys(s.skipped).length > 0 && (
+      {s && Object.keys(s.skipped ?? {}).length > 0 && (
         <>
           <h2 className="mb-2 mt-8 text-lg font-semibold">Why leads were skipped</h2>
           <ul className="space-y-1 text-sm">
-            {Object.entries(s.skipped).map(([reason, n]) => (
+            {Object.entries(s.skipped ?? {}).map(([reason, n]) => (
               <li key={reason}>
-                {n} × {SKIP_LABELS[reason as SkipReason] ?? reason}
+                {n} × {plainReason(reason)}
               </li>
             ))}
           </ul>
@@ -137,7 +148,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
       )}
       {s && (
         <p className="mt-6 text-xs text-zinc-500">
-          {s.dryRun ? "Dry run. " : ""}Took {s.minutes} min. Cost recorded from usage × the price table: ${s.costUsd}.
+          {s.dryRun ? "Test run. " : ""}Took {s.minutes} min. Cost recorded from usage × the price table: ${s.costUsd}.
         </p>
       )}
     </>

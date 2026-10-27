@@ -3,14 +3,19 @@ import { requestJson, type FetchLike } from "./http";
 import { parseEncryptionKey } from "./token-crypto";
 
 /**
- * The only Google permissions this app asks for. Nothing broader:
- * - gmail.compose: create (and later send) drafts, and read the connected address with users.getProfile
- * - gmail.labels: create and list labels such as AI-Outreach
- * Putting a label ON a message needs gmail.modify, which is deliberately not requested (see createDraft in gmail.ts).
+ * The only Google permissions this app asks for:
+ * - gmail.compose: create drafts, and read the connected address with users.getProfile
+ * - gmail.modify: create the AI-Outreach label and put it on each draft (labels cannot be put on a message with less)
+ * gmail.modify does not allow sending mail by itself, and nothing in this app sends.
+ * A mailbox connected before gmail.modify was requested has only gmail.compose and shows "Reconnect needed".
  */
 export const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 export const GMAIL_LABELS_SCOPE = "https://www.googleapis.com/auth/gmail.labels";
-export const GOOGLE_SCOPES = [GMAIL_COMPOSE_SCOPE, GMAIL_LABELS_SCOPE] as const;
+export const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+export const GOOGLE_SCOPES = [GMAIL_COMPOSE_SCOPE, GMAIL_MODIFY_SCOPE] as const;
+
+/** Connected, but without the permission that lets the label be put on drafts: the person must reconnect once. */
+export const needsReconnectForLabel = (scopes: string[]): boolean => !scopes.includes(GMAIL_MODIFY_SCOPE);
 
 export const GOOGLE_CALLBACK_PATH = "/api/google/callback";
 export const GOOGLE_CONNECT_PATH = "/api/google/connect";

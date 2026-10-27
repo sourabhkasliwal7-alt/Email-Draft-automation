@@ -25,6 +25,16 @@ import { skipLead, type Skipped } from "./run-common";
 type Paid = ReturnType<typeof import("../spend").makeSpender>;
 
 const DAY = 86_400_000;
+
+/**
+ * Where research came from. Pages, search results and facts produced by the MOCK adapters are invented demo text, so they are
+ * labelled and never reused once the real adapters are on: a real run only ever reads evidence that was fetched for real.
+ * Research saved before this label existed carries the old "serper+fetcher" label and counts as demo text in a real run.
+ */
+export const RESEARCH_LIVE = "live:serper+fetcher";
+export const RESEARCH_MOCK = "mock";
+export const researchIsLive = (ctx: WorkerCtx) => ctx.modes.fetcher === "live" && ctx.modes.search === "live" && ctx.modes.llm === "live";
+const researchLabel = (ctx: WorkerCtx) => (researchIsLive(ctx) ? RESEARCH_LIVE : RESEARCH_MOCK);
 const SITE_PATHS = ["/", "/about", "/careers", "/jobs", "/blog", "/services"];
 const CACHE_DAYS = 14;
 const STALE_DAYS = { hiring: 60, other: 180 };
@@ -54,7 +64,9 @@ const isOwnHost = (url: string, domain: string) => {
 
 /** Saved facts of a company (evidence rows written by this module), newest first. */
 export async function loadFacts(ctx: WorkerCtx, companyId: string, devKeywords: string[]): Promise<Fact[]> {
-  const rows = must(await ctx.db.from("evidence_items").select("id, url, title, snippet, retrieved_at").eq("company_id", companyId), "load facts");
+  const all = must(await ctx.db.from("evidence_items").select("id, url, title, snippet, retrieved_at, research_runs(provider)").eq("company_id", companyId), "load facts");
+  // in a real run only evidence that real adapters fetched is a fact (older demo rows of the same company are ignored)
+  const rows = researchIsLive(ctx) ? all.filter((r) => r.research_runs?.provider === RESEARCH_LIVE) : all;
   const sig = must(await ctx.db.from("signals").select("evidence_item_id, signal_date").eq("company_id", companyId), "load fact dates");
   const out: Fact[] = [];
   for (const r of rows) {
@@ -73,8 +85,9 @@ const triggerRank = (f: Fact) => TRIGGER_ORDER.indexOf(f.trigger) * 1000 + (f.da
 export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, lead: LeadBundle): Promise<{ fit: "yes" | "uncertain"; businessType: string } | Skipped> {
   const company = lead.contacts!.companies;
   if (!company?.domain) return skipLead(ctx.db, lead, "no-data", "no company website") as Promise<Skipped>;
-  const prev = (lead.score_components as { screen?: { fit: "yes" | "uncertain" | "no"; business_type: string } } | null)?.screen;
-  if (prev) return prev.fit === "no" ? (skipLead(ctx.db, lead, "screen-failed", prev.business_type) as Promise<Skipped>) : { fit: prev.fit, businessType: prev.business_type };
+  const prev = (lead.score_components as { screen?: { fit: "yes" | "uncertain" | "no"; business_type: string; mode?: string } } | null)?.screen;
+  // a quick check made by the mock model is not reused once the real model is on (results saved before this note count as mock)
+  if (prev && (prev.mode ?? "mock") === ctx.modes.llm) return prev.fit === "no" ? (skipLead(ctx.db, lead, "screen-failed", prev.business_type) as Promise<Skipped>) : { fit: prev.fit, businessType: prev.business_type };
 
   let page;
   try {
@@ -94,7 +107,7 @@ export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig
   }
   if (!result) return skipLead(ctx.db, lead, "screen-failed", "the quick check returned unreadable output") as Promise<Skipped>;
 
-  const components = { ...((lead.score_components as object) ?? {}), screen: result } as Json;
+  const components = { ...((lead.score_components as object) ?? {}), screen: { ...result, mode: ctx.modes.llm } } as Json;
   must(await ctx.db.from("campaign_leads").update({ score_components: components, icp_segment: result.business_type, status: result.fit === "no" ? lead.status : "researching" }).eq("id", lead.id), "save quick check");
   await leadEvent(ctx.db, lead, "screened", { fit: result.fit, business_type: result.business_type });
   if (result.fit === "no") return skipLead(ctx.db, lead, "screen-failed", result.reason.slice(0, 120)) as Promise<Skipped>;
@@ -174,10 +187,10 @@ export async function researchLead(
     if (!cur || rankOf(f) > rankOf(cur)) byUrl.set(f.source_url, f);
   }
   const stamp = now.toISOString();
-  const runKey = `facts:${lead.id}:${stamp.slice(0, 10)}`;
+  const runKey = `facts:${lead.id}:${stamp.slice(0, 10)}:${researchLabel(ctx)}`;
   const run =
     (await ctx.db.from("research_runs").select("id").eq("idempotency_key", runKey).maybeSingle()).data ??
-    must(await ctx.db.from("research_runs").insert({ company_id: company.id, campaign_lead_id: lead.id, depth: "standard", status: "completed", provider: "serper+fetcher", idempotency_key: runKey, started_at: stamp, finished_at: stamp }).select("id").single(), "log research run");
+    must(await ctx.db.from("research_runs").insert({ company_id: company.id, campaign_lead_id: lead.id, depth: "standard", status: "completed", provider: researchLabel(ctx), idempotency_key: runKey, started_at: stamp, finished_at: stamp }).select("id").single(), "log research run");
   for (const f of byUrl.values()) {
     const own = isOwnHost(f.source_url, company.domain);
     const ev = must(

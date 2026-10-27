@@ -8,6 +8,7 @@ import type { NextConfig } from "next";
 // process.loadEnvFile treats a stray line without "=" as the start of the next key and silently drops that variable.
 function loadRootEnv(file: string) {
   if (!fs.existsSync(file)) return;
+  const fromFile = new Map<string, string>();
   for (const raw of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(raw);
     if (!m) continue;
@@ -15,8 +16,9 @@ function loadRootEnv(file: string) {
     const quote = value[0];
     if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length >= 2) value = value.slice(1, -1);
     else value = value.replace(/\s+#.*$/, "");
-    if (process.env[m[1]!] === undefined) process.env[m[1]!] = value;
+    fromFile.set(m[1]!, value); // a later line for the same name wins, like dotenv
   }
+  for (const [k, v] of fromFile) if (process.env[k] === undefined) process.env[k] = v;
 }
 loadRootEnv(path.resolve(__dirname, "../../.env"));
 

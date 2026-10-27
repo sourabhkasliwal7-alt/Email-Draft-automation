@@ -13,7 +13,13 @@ export interface LlmRequest {
   maxTokens?: number;
 }
 export interface LlmAdapter {
-  complete(req: LlmRequest): Promise<{ text: string; model: string; usage: Usage }>;
+  complete(req: LlmRequest): Promise<{
+    text: string;
+    model: string;
+    usage: Usage;
+    /** the provider's own cost figure, for display only: the recorded cost always comes from the price table */
+    reportedCostUsd?: number;
+  }>;
 }
 
 export interface SearchResult {
@@ -58,6 +64,10 @@ export interface ApolloFilters {
   employeeMin?: number | null;
   employeeMax?: number | null;
   perPage?: number;
+  /** companies with an open job posting for one of these titles (only when the Apollo plan allows it) */
+  hiringTitles?: string[];
+  /** companies with at least this many open job postings */
+  minOpenJobs?: number | null;
 }
 export interface ApolloRevealFlags {
   revealPersonalEmails: false;
@@ -75,12 +85,21 @@ export interface ApolloPerson {
   country: string | null;
   organization: { name: string; domain: string | null; industry: string | null; employeeCount: number | null } | null;
 }
+/** What "Test connection" learns about an Apollo key without spending a credit. */
+export interface ApolloAccessReport {
+  health: { ok: boolean; message: string };
+  search: { ok: boolean; message: string };
+  reveal: { ok: boolean; message: string };
+  usage: Usage;
+}
 /** Search never returns emails (like Apollo); revealEmail is a separate, credit-spending call made only after qualification. */
 export interface ApolloAdapter {
   searchPeople(filters: ApolloFilters, page: number): Promise<{ people: ApolloPerson[]; page: number; totalPages: number; totalEntries: number; usage: Usage }>;
   getOrganization(domain: string): Promise<{ org: { name: string; domain: string; industry: string | null; employeeCount: number | null; country: string | null } | null; usage: Usage }>;
   /** flags must always be the "email only" set (no phone, no personal email, no waterfall): see REVEAL_FLAGS in core */
   revealEmail(req: { personId: string; flags: ApolloRevealFlags }): Promise<{ email: string | null; usage: Usage }>;
+  /** free checks: is the key valid, does people search work, is the reveal call reachable on this plan (nothing is unlocked) */
+  checkAccess(): Promise<ApolloAccessReport>;
 }
 
 export type VerifyStatus = "valid" | "invalid" | "risky" | "catch_all" | "unknown";
@@ -102,6 +121,8 @@ export interface GmailAdapter {
   createDraft(req: GmailDraftRequest): Promise<{
     draftId: string;
     messageIdHeader: string;
+    /** Gmail's id of the draft's message: it is what a link that opens the draft needs */
+    messageId?: string;
     /** whether the label was put on the draft; the draft itself is saved either way */
     labelApplied?: boolean;
     /** why the label was not applied, for the run log */

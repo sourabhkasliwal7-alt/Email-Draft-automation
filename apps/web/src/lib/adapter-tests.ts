@@ -1,6 +1,6 @@
 import { createServiceDb } from "@/lib/supabase/service";
 
-export type TestProvider = "anthropic" | "serper" | "verifier" | "gmail";
+export type TestProvider = "anthropic" | "serper" | "verifier" | "gmail" | "apollo";
 
 /** What the worker stores on the job (apps/worker/src/jobs/adapter-test.ts). */
 export interface TestResult {
@@ -13,7 +13,35 @@ export interface TestResult {
   draftId?: string;
   mailbox?: string;
   labelNote?: string;
+  llmProvider?: string;
+  reportedCostUsd?: number;
+  /** Apollo only: what the key can do */
+  apollo?: {
+    mode?: "mock" | "live";
+    health?: boolean | string;
+    search?: { ok: boolean; message?: string };
+    reveal?: { ok: boolean; message?: string };
+  };
   finishedAt: string;
+}
+
+/** What the worker stores on an `apollo.find` job: the free people search that fills a campaign with leads. */
+export interface FindResult {
+  found?: number;
+  imported?: number;
+  duplicate?: number;
+  suppressed?: number;
+  invalid?: number;
+  note?: string;
+  demo?: boolean;
+}
+
+export interface FindRow {
+  state: "waiting" | "running" | "done" | "failed";
+  queuedAt: string;
+  waitingTooLong: boolean;
+  result: FindResult | null;
+  error: string | null;
 }
 
 export interface TestRow {
@@ -57,4 +85,28 @@ export async function latestAdapterTests(): Promise<Record<string, TestRow>> {
   return out;
 }
 
-export const isTestActive = (t: TestRow | undefined) => t?.state === "waiting" || t?.state === "running";
+export const isTestActive = (t: { state: string } | undefined) => t?.state === "waiting" || t?.state === "running";
+
+/** Queues the free Apollo people search for one campaign (the worker imports the people it finds). Call after a permission check. */
+export async function queueApolloFind(campaignId: string): Promise<{ ok: boolean; message: string }> {
+  const db = createServiceDb();
+  const since = new Date(Date.now() - RECENT_MS).toISOString();
+  const { data: open } = await db.from("jobs").select("id").eq("type", "apollo.find").eq("campaign_id", campaignId).in("status", ["pending", "running"]).gte("created_at", since);
+  if (open?.length) return { ok: false, message: "A search for this campaign is already running. Wait a few seconds." };
+  const { error } = await db.from("jobs").insert({ type: "apollo.find", idempotency_key: `apollo.find:${campaignId}:${Date.now()}`, payload: { campaignId }, campaign_id: campaignId });
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, message: "Search started. The result shows here in a few seconds." };
+}
+
+/** The newest search per campaign, keyed by campaign id. */
+export async function latestApolloFinds(): Promise<Record<string, FindRow>> {
+  const db = createServiceDb();
+  const { data } = await db.from("jobs").select("status, campaign_id, result, last_error, created_at").eq("type", "apollo.find").order("created_at", { ascending: false }).limit(60);
+  const out: Record<string, FindRow> = {};
+  for (const j of data ?? []) {
+    if (!j.campaign_id || out[j.campaign_id]) continue;
+    const state = j.status === "completed" ? "done" : j.status === "failed" ? "failed" : j.status === "running" ? "running" : "waiting";
+    out[j.campaign_id] = { state, queuedAt: j.created_at, waitingTooLong: state === "waiting" && Date.now() - new Date(j.created_at).getTime() > 20_000, result: j.status === "completed" ? (j.result as unknown as FindResult | null) : null, error: j.last_error };
+  }
+  return out;
+}

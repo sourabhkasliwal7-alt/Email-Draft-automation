@@ -20,7 +20,7 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
   projects: [
     { name: "zero-key", testMatch: /health\.spec\.ts/, use: { baseURL: `http://localhost:${ZERO_KEY_PORT}` } },
-    { name: "app", testMatch: /app\.spec\.ts|roles\.spec\.ts|import\.spec\.ts|google\.spec\.ts/, use: { baseURL: `http://localhost:${APP_PORT}` } },
+    { name: "app", testMatch: /app\.spec\.ts|roles\.spec\.ts|import\.spec\.ts|google\.spec\.ts|simple\.spec\.ts/, use: { baseURL: `http://localhost:${APP_PORT}` } },
   ],
   webServer: [
     {

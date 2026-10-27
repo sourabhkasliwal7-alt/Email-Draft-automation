@@ -21,12 +21,12 @@ export async function saveOffer(_prev: ActionState, formData: FormData): Promise
   if (id) {
     const { error } = await guard.supabase.from("offers").update(row).eq("id", id).is("deleted_at", null);
     if (error) return { ok: false, message: dbErrorMessage(error) };
-    revalidatePath("/offers");
+    revalidatePath("/setup");
     return { ok: true, message: "Offer saved." };
   }
   const { data, error } = await guard.supabase.from("offers").insert(row).select("id").single();
   if (error) return { ok: false, message: dbErrorMessage(error) };
-  revalidatePath("/offers");
+  revalidatePath("/setup");
   redirect(`/offers/${data.id}`);
 }
 
@@ -35,7 +35,7 @@ export async function archiveOffer(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await guard.supabase.from("offers").update({ deleted_at: new Date().toISOString() }).eq("id", id);
-  revalidatePath("/offers");
+  revalidatePath("/setup");
 }
 
 export async function saveCaseStudy(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -57,7 +57,7 @@ export async function saveCaseStudy(_prev: ActionState, formData: FormData): Pro
     ? await guard.supabase.from("case_studies").update(row).eq("id", id).is("deleted_at", null)
     : await guard.supabase.from("case_studies").insert(row);
   if (error) return { ok: false, message: dbErrorMessage(error) };
-  revalidatePath("/offers");
+  revalidatePath("/setup");
   redirect(`/offers/${row.offer_id ?? ""}`);
 }
 
@@ -66,5 +66,5 @@ export async function archiveCaseStudy(formData: FormData): Promise<void> {
   if (!guard.ok) return;
   const id = String(formData.get("id") ?? "");
   if (id) await guard.supabase.from("case_studies").update({ deleted_at: new Date().toISOString() }).eq("id", id);
-  revalidatePath("/offers");
+  revalidatePath("/setup");
 }

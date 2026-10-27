@@ -34,7 +34,7 @@ export function InboxLimitsForm({
   return (
     <form onSubmit={action} className="space-y-3" noValidate>
       <input type="hidden" name="id" value={inbox.id} />
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <Field label="Display name" name={`displayName-${inbox.id}`} error={err.displayName}>
           <input id={`displayName-${inbox.id}`} name="displayName" defaultValue={inbox.display_name ?? ""} className="w-full rounded-md border px-3 py-2 text-sm" />
         </Field>
@@ -51,18 +51,15 @@ export function InboxLimitsForm({
             </>
           )}
         </Field>
-        <Field label="Draft cap / day" name={`dailyDraftCap-${inbox.id}`} error={err.dailyDraftCap}>
+        <Field label="Drafts per day (limit)" name={`dailyDraftCap-${inbox.id}`} error={err.dailyDraftCap}>
           <input id={`dailyDraftCap-${inbox.id}`} name="dailyDraftCap" defaultValue={inbox.daily_draft_cap} className="w-full rounded-md border px-3 py-2 text-sm" />
         </Field>
-        <Field label="Send cap / day" name={`dailySendCap-${inbox.id}`} error={err.dailySendCap}>
-          <input id={`dailySendCap-${inbox.id}`} name="dailySendCap" defaultValue={inbox.daily_send_cap} className="w-full rounded-md border px-3 py-2 text-sm" />
-        </Field>
-        <Field label="Seconds between sends" name={`minSecondsBetweenSends-${inbox.id}`} error={err.minSecondsBetweenSends}>
-          <input id={`minSecondsBetweenSends-${inbox.id}`} name="minSecondsBetweenSends" defaultValue={inbox.min_seconds_between_sends} className="w-full rounded-md border px-3 py-2 text-sm" />
-        </Field>
+        {/* sending is not part of this tool: these two keep their saved values */}
+        <input type="hidden" name="dailySendCap" value={inbox.daily_send_cap} />
+        <input type="hidden" name="minSecondsBetweenSends" value={inbox.min_seconds_between_sends} />
       </div>
       <FormMessage state={state} />
-      <SubmitButton variant="outline" pending={pending}>Save limits</SubmitButton>
+      <SubmitButton variant="outline" pending={pending}>Save</SubmitButton>
     </form>
   );
 }

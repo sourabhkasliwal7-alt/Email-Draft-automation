@@ -9,9 +9,10 @@ export function LinkButton({
   size,
   className,
   children,
-}: { href: string; className?: string; children: React.ReactNode } & VariantProps<typeof buttonVariants>) {
+  "data-testid": testId,
+}: { href: string; className?: string; children: React.ReactNode; "data-testid"?: string } & VariantProps<typeof buttonVariants>) {
   return (
-    <Link href={href} className={cn(buttonVariants({ variant, size }), className)}>
+    <Link href={href} data-testid={testId} className={cn(buttonVariants({ variant, size }), className)}>
       {children}
     </Link>
   );
