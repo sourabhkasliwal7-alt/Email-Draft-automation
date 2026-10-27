@@ -10,3 +10,6 @@ coverage/
 
 # Playwright saved sessions
 apps/web/e2e/.auth/
+
+# Local backups taken before a data cleanup (contain lead data): never commit
+backups/

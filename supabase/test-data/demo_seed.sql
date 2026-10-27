@@ -1,13 +1,13 @@
--- Dev seed (idempotent). Demo data only: example.com domains, no real recipients.
+-- DEMO DATA FOR TESTS AND LOCAL DEMOS ONLY. Never run this on a project you use for real work.
+-- Nothing in the app or the worker runs it (a unit test checks that); it is loaded by hand when someone wants a demo.
+-- Idempotent. Demo data only: example.com domains, no real recipients.
 
-insert into public.settings (key, value) values
-  ('display_timezone', '"Asia/Kolkata"'),
-  ('storage_timezone', '"UTC"')
-on conflict (key) do nothing;
-
-insert into public.spend_caps (scope, period, cap_usd)
-select 'global', p, c from (values ('daily', 5), ('monthly', 50)) v(p, c)
-where not exists (select 1 from public.spend_caps where scope = 'global' and period = v.p);
+do $$
+begin
+  if exists (select 1 from public.inboxes where encrypted_refresh_token is not null) then
+    raise exception 'refusing to add demo data: a Gmail mailbox is connected, so this is a real project';
+  end if;
+end $$;
 
 insert into public.offers (id, name, description, allowed_claims, cta_options) values
   ('00000000-0000-4000-8000-0000000000a1', 'Nuance: AI workflow audit',
