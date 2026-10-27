@@ -80,14 +80,19 @@ export async function researchCompany(
     }
   }
 
-  const run = must(
-    await ctx.db
-      .from("research_runs")
-      .upsert({ company_id: company.id, campaign_lead_id: ids.campaignLeadId, depth, status: "running", provider: "serper+fetcher", idempotency_key: researchRunKey(ids.jobId), started_at: new Date().toISOString() }, { onConflict: "idempotency_key" })
-      .select("id")
-      .single(),
-    "start research run",
-  );
+  // the unique index on idempotency_key is partial, which upsert cannot target: look up, then insert
+  const runKey = researchRunKey(ids.jobId);
+  const existingRun = (await ctx.db.from("research_runs").select("id").eq("idempotency_key", runKey).maybeSingle()).data;
+  const run =
+    existingRun ??
+    must(
+      await ctx.db
+        .from("research_runs")
+        .insert({ company_id: company.id, campaign_lead_id: ids.campaignLeadId, depth, status: "running", provider: "serper+fetcher", idempotency_key: runKey, started_at: new Date().toISOString() })
+        .select("id")
+        .single(),
+      "start research run",
+    );
 
   if (!sources.length) {
     await ctx.db.from("research_runs").update({ status: "completed", finished_at: new Date().toISOString(), error: "no readable sources (site down, empty or blocked)" }).eq("id", run.id);

@@ -13,6 +13,8 @@ import { workflowStartJob } from "./workflow";
  * backoff, and recovery of jobs whose worker died mid-run. Handlers are idempotent (job_steps / unique keys).
  */
 export const MAX_ATTEMPTS = 3;
+/** campaign names starting with this are reserved for automated tests */
+export const RESERVED_TEST_PREFIX = "itest";
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
 type JobRow = { id: string; type: string; payload: Json; attempts: number; batch_id: string | null };
@@ -44,16 +46,20 @@ export interface JobFilter {
 export async function claimJob(ctx: WorkerCtx, now = new Date(), only: JobFilter = {}): Promise<JobRow | null> {
   let query = ctx.db
     .from("jobs")
-    .select("id, type, payload, attempts, batch_id")
+    .select("id, type, payload, attempts, batch_id, campaigns(name)")
     .eq("status", "pending")
     .lte("run_after", now.toISOString())
     .in("type", Object.keys(HANDLERS))
     .order("created_at")
-    .limit(5);
+    .limit(25);
   if (only.keyPrefix) query = query.like("idempotency_key", `${only.keyPrefix}%`);
   if (only.campaignIds) query = query.in("campaign_id", only.campaignIds);
-  const { data: candidates } = await query;
-  for (const c of candidates ?? []) {
+  const { data: found } = await query;
+  // Campaigns named "itest..." belong to automated tests: a normal worker never touches their jobs. A test worker opts in by
+  // naming the jobs it wants (keyPrefix / campaignIds).
+  const optedIn = Boolean(only.keyPrefix || only.campaignIds);
+  const candidates = (found ?? []).filter((c) => optedIn || !(c.campaigns?.name ?? "").startsWith(RESERVED_TEST_PREFIX));
+  for (const c of candidates) {
     const { data } = await ctx.db
       .from("jobs")
       .update({ status: "running", locked_by: ctx.workerId, locked_at: now.toISOString(), attempts: c.attempts + 1 })

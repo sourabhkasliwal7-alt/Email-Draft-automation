@@ -52,10 +52,8 @@ export function makeSpender(ctx: WorkerCtx, scope: SpendScope) {
     if (!ctx.pg) {
       if (!mock) throw new Error(`DATABASE_URL is required for live ${adapter} calls (spend-cap guard)`);
       const result = await call();
-      await ctx.db.from("usage_records").upsert(
-        { provider, operation, units: result.usage.units, cost_usd: 0, campaign_id: scope.campaignId, campaign_lead_id: scope.leadId, job_id: scope.jobId, idempotency_key: idem, status: "recorded", is_mock: true, step: scope.step },
-        { onConflict: "idempotency_key", ignoreDuplicates: true },
-      );
+      // partial unique index on idempotency_key: a repeat insert simply fails with 23505, which is fine
+      await ctx.db.from("usage_records").insert({ provider, operation, units: result.usage.units, cost_usd: 0, campaign_id: scope.campaignId, campaign_lead_id: scope.leadId, job_id: scope.jobId, idempotency_key: idem, status: "recorded", is_mock: true, step: scope.step });
       return result;
     }
 

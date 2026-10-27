@@ -11,3 +11,4 @@ export * from "./pipeline/score";
 export * from "./pipeline/steps";
 export * from "./pipeline/ids";
 export * from "./pipeline/providers";
+export * from "./workflow";

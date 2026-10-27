@@ -37,6 +37,8 @@ describe("send isolation", () => {
       join("packages", "adapters", "tests", "adapters.test.ts"),
       SELF,
       SEND_MODULE,
+      // tests of the send job inspect the mock sender to prove nothing was sent
+      join("apps", "worker", "tests", "flow.integration.test.ts"),
     ]);
     const offenders = files.filter((f) => !allowed.has(f) && /\bgmailSender\b|\bsendDraft\b/.test(readFileSync(join(root, f), "utf8")));
     expect(offenders).toEqual([]);

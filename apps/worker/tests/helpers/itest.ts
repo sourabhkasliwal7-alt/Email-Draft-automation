@@ -33,7 +33,7 @@ export async function cleanup(tag: string, storagePaths: string[] = []) {
     await client.query("begin");
     await client.query("set local session_replication_role = replica");
     const like = `%${tag}%`;
-    const q = (sql: string) => client.query(sql, [like]);
+    const q = (sql: string) => client.query(sql, sql.includes("$1") ? [like] : []);
     await q(`create temp table _c on commit drop as select id from public.campaigns where name like $1`);
     await q(`create temp table _l on commit drop as select id, contact_id from public.campaign_leads where campaign_id in (select id from _c)`);
     await q(`create temp table _d on commit drop as select id from public.email_drafts where campaign_lead_id in (select id from _l)`);
