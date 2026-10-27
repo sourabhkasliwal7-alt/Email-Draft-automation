@@ -6,9 +6,41 @@
 | 1 | Database | DONE | 2026-10-26 |
 | 2 | Auth and setup screens | DONE | 2026-10-26 |
 | 3 | CSV/XLSX import | DONE | 2026-10-26 |
-| 4 | Queue and workflow engine | next | |
-| 4A | Automatic Apollo lead pull (Clay-style trigger) | queued: runs right after Phase 4 (plan updated 2026-10-26) | |
-| 5-13 | | not started | |
+| CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
+| 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## Later (deferred on purpose, in rough priority order)
+
+1. **Live adapters** (read each installed SDK's docs first): Anthropic (screen/extract on the cheap model, write on the strong model), Serper, the page fetcher (robots.txt, no paywalls/logins/CAPTCHAs), Apollo (search free; reveal with the REVEAL_FLAGS only), the email verifier, Gmail drafts (create draft in the right mailbox + label `AI-Outreach`). Each is a single file behind the existing interface; `ADAPTER_<NAME>=live` selects it. Enter the provider prices in Settings first: a live call without a price row is refused.
+2. Gmail OAuth connect screen (inboxes hold the encrypted refresh token; AES-256-GCM).
+3. SRS 4.8 tracking and follow-ups; reply tracking; opt-out handling from replies.
+4. Crunchbase (still behind `CRUNCHBASE_ENABLED`, off).
+5. Sending UI (the send job, approval records and all guards exist and are tested; the screens are hidden and `SENDING_ENABLED` is off). The Review and Sending pages from Phase 2 still exist at /review and /sending but are not in the navigation.
+6. Full dashboard, funnel and cost reports; load tests; deployment hardening; pg-boss/Mastra migration (the DB-backed job runner is the engine now; the `pgboss` schema is installed but unused).
+7. Extra edge cases: per-mailbox targets with several mailboxes, SRS A4 weekly ramp-up, consent-risk country rules, LinkedIn (off), `over-quota` leads re-queued the next day.
+
+## CORE - the automatic flow from docs/SRS.docx (2026-10-27)
+
+**What a run does** (`apps/worker/src/jobs/run.ts`, rules in `packages/core/src/workflow.ts`, one job per run, lead state in the database so a resume never repeats a paid step - SRS G8):
+1. Start: button on **Runs** (with an estimate and a confirm) or the daily schedule (weekdays, 06:30 IST by default, listed holidays skipped, once a day, campaigns that are Active). Run lock (one run at a time, a lock older than 3 h is stale), DRY_RUN mode, 120-minute run limit (pauses; Resume continues), settings check (postal address + opt-out line required before real drafts).
+2. Today's number = min(campaign daily cap, mailbox draft cap, daily reveal credits left), never more than the monthly credits left.
+3. Apollo people search (free), about target / 0.75 people, imported through the same engine as a CSV (duplicates, suppression/DNC). CSV leads already in the campaign work the same way.
+4. Clean: DNC/suppressed, excluded domains/titles/countries, no website, same company within 30 days (also inside the run).
+5. Stage A quick check: the homepage must open, then a cheap-model fit check (yes / uncertain / no).
+6. Stage B research: up to 6 site pages incl. the careers page, two Serper queries, facts with an **exact quote check** (SRS 7.4: the quote must be on the page named as the source, word for word after tidying; links/emails/instruction words rejected; hiring counts only from the company's own site; stale facts dropped; a lead is skipped when more than 40% of its facts fail). Facts are stored as evidence rows (URL + retrieval date).
+7. Score in code (fit 30, role 20, size 15, trigger 25, data 10; weights editable in the `workflow` setting). Approve the top leads at or above the cut-off (55) up to today's number; the rest are skipped with a reason (`below-threshold`, `over-quota`).
+8. Credit-guarded reveal (`apps/worker/src/pipeline/reveal.ts`, the only reveal path): approved leads only, never twice for the same person (unique ledger row), 70/day and 2000/month, phone/personal email/waterfall always false, ledger row written **before** the call and completed after, a call that died half-way stays `uncertain` and is never retried automatically. Then role-address check and the verifier (risky/catch-all skipped unless allowed).
+9. Write the email (SRS section 8: one verified fact, one process question, tools sentence by industry, the fixed white-label line, soft ask, 60-130 words, no links/exclamation marks/dashes/banned phrases, numbers only from the used fact or the case-study table, footer with postal address + opt-out line), code checks W1-W8 plus the model check C4 (at least 9 of 12, no zero), one rewrite, then `draft-failed`.
+10. Gmail draft in the campaign's mailbox with label `AI-Outreach` and a bracketed note on top (score, trigger, source). **No in-app approval step**; failures go to **Needs attention**. Nothing is sent: `SENDING_ENABLED` is off and its switch is hidden in the app.
+11. Run log with counts per step, daily summary (drafts, skipped by reason, credits, cost, minutes) on the run page and the dashboard.
+
+**Database:** `supabase/migrations/20261027090000_run_engine.sql` (applied through the MCP): `credit_ledger` (RLS: admin/operator read, writes via the service role only; unique per person) and the extra batch pause reason `time_limit`.
+
+**UI** (minimal, per the SRS note): Dashboard (latest run + needs attention), **Runs** (Start + estimate + dry run, recent runs, Resume/Cancel, run log), **Needs attention** (Skip / Do not contact), Campaigns (settings), Import, Suppression, Mailboxes, Offers, Settings (new "Daily run" section: schedule, cut-off, credit limits, footer text, white-label line, style, tools by industry, example emails, excluded domains/titles, banned phrases, holidays).
+
+**Verified:** lint, typecheck; core unit tests (59, incl. 19 for the SRS rules: quote check, 40% rule, score, top-N, schedule/holidays, credit guard, email rules); worker integration tests against the dev database with mock adapters: the whole Apollo run end to end (drafts in Gmail with label + note + footer, only approved leads revealed, ledger flags all false, nothing sent), resume repeats no paid step, CSV clean/skip reasons + one rewrite + draft-failed in Needs attention, dry run, credit guard refusals (not approved, daily/monthly cap, dry run, never twice, uncertain), and the send safety tests (no send without approval, SENDING_ENABLED off by default, changed draft / inactive inbox / DNC / suppression block the send, exactly-once, unknown Gmail failure never resent, price row + spend cap before live calls).
+
+**How to test it in the UI (mock mode, no keys needed):** see the end of the chat message / README "Try the core flow".
 
 ## Phase 3 - CSV/XLSX import (2026-10-26)
 

@@ -5,10 +5,10 @@ test.skip(!hasDb(), "needs the Supabase env in the root .env");
 test.describe.configure({ mode: "serial" });
 
 const NAV = {
-  admin: ["Dashboard", "Campaigns", "Import", "Leads", "Review", "Sending", "Follow-ups", "Suppression", "Inboxes", "Offers", "Jobs", "Usage & Cost", "Settings"],
-  operator: ["Dashboard", "Campaigns", "Import", "Leads", "Review", "Sending", "Follow-ups", "Suppression", "Inboxes", "Offers", "Jobs", "Usage & Cost"],
-  reviewer: ["Dashboard", "Campaigns", "Leads", "Review", "Follow-ups", "Suppression", "Offers"],
-  sender: ["Dashboard", "Campaigns", "Leads", "Sending", "Follow-ups", "Suppression", "Offers"],
+  admin: ["Dashboard", "Runs", "Needs attention", "Campaigns", "Import", "Suppression", "Mailboxes", "Offers", "Settings"],
+  operator: ["Dashboard", "Runs", "Needs attention", "Campaigns", "Import", "Suppression", "Mailboxes", "Offers"],
+  reviewer: ["Dashboard", "Needs attention", "Campaigns", "Suppression", "Offers"],
+  sender: ["Dashboard", "Campaigns", "Suppression", "Offers"],
 } as const;
 
 for (const role of ["admin", "operator", "reviewer", "sender"] as const) {
@@ -21,8 +21,8 @@ for (const role of ["admin", "operator", "reviewer", "sender"] as const) {
 
 const FORBIDDEN: Record<string, string[]> = {
   operator: ["/settings"],
-  reviewer: ["/settings", "/campaigns/new", "/offers/new", "/import", "/inboxes", "/sending", "/jobs", "/usage"],
-  sender: ["/settings", "/campaigns/new", "/offers/new", "/import", "/review", "/inboxes", "/jobs", "/usage"],
+  reviewer: ["/settings", "/campaigns/new", "/offers/new", "/import", "/inboxes", "/sending", "/jobs", "/usage", "/runs"],
+  sender: ["/settings", "/campaigns/new", "/offers/new", "/import", "/review", "/inboxes", "/jobs", "/usage", "/runs", "/attention"],
 };
 
 for (const [role, paths] of Object.entries(FORBIDDEN)) {
@@ -47,4 +47,24 @@ test("reviewer and sender see campaigns and suppression read-only", async ({ pag
     await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
     await page.context().clearCookies(); // not "Sign out": that would revoke the shared saved session
   }
+});
+
+test("operator sees the run page with a Start form (no send controls); admin sees the run settings and gets clear validation", async ({ page }) => {
+  await loginAs(page, "operator");
+  await page.goto("/runs");
+  await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await expect(page.getByText(/send/i).filter({ hasText: /approve|send now/i })).toHaveCount(0);
+  await page.goto("/attention");
+  await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible();
+  await page.context().clearCookies();
+
+  await loginAs(page, "admin");
+  await page.goto("/settings");
+  const form = page.getByTestId("workflow-settings");
+  await expect(form).toBeVisible();
+  await form.getByLabel("Daily start time (IST)").fill("25:99");
+  await form.getByRole("button", { name: "Save run settings" }).click();
+  await expect(page.getByTestId("error-run_time_ist")).toContainText("HH:MM");
+  await expect(page.getByLabel(/SENDING_ENABLED/)).toHaveCount(0); // the sending switch is hidden in the app
 });

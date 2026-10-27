@@ -153,7 +153,6 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
 }
 
 // ---------------------------------------------------------------- the run
-const TERMINAL = new Set(["disqualified", "failed", "sent", "replied", "bounced", "opted_out", "closed", "nurture"]);
 
 export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: JobInfo) {
   const { db } = ctx;

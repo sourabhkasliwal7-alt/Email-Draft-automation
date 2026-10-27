@@ -525,3 +525,65 @@ export function withFooter(body: string, postal: string, optout: string): string
 export function bracketNote(i: { score: number | null; trigger: string | null; source: string | null }): string {
   return `[AI note, delete before sending: score ${i.score ?? "n/a"}; trigger: ${i.trigger ?? "none"}; source: ${i.source ?? "n/a"}]`;
 }
+
+// ---------------------------------------------------------------- the settings form (flat text fields <-> WorkflowConfig)
+const lines = (s: string) => s.split(/\r?\n|,/).map((x) => x.trim()).filter(Boolean);
+const num = (label: string, min: number, max: number) =>
+  z.coerce.number({ error: `${label} must be a number` }).int(`${label} must be a whole number`).min(min, `${label} must be at least ${min}`).max(max, `${label} must be at most ${max}`);
+
+export const workflowFormSchema = z.object({
+  schedule_enabled: z.boolean().default(false),
+  run_time_ist: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM, for example 06:30"),
+  holidays: z.string().default(""),
+  approve_threshold: num("Approval cut-off", 0, 100),
+  daily_reveal_cap: num("Daily reveal limit", 0, 100000),
+  monthly_credit_cap: num("Monthly credit limit", 0, 1000000),
+  same_company_cooldown_days: num("Same-company days", 0, 365),
+  run_limit_minutes: num("Run time limit", 5, 1440),
+  dry_run: z.boolean().default(false),
+  allow_risky: z.boolean().default(false),
+  postal_address: z.string().trim().max(300).default(""),
+  optout_line: z.string().trim().max(300).default(""),
+  white_label_line: z.string().trim().min(5, "Enter the white-label line").max(300),
+  style_guide: z.string().trim().max(2000).default(""),
+  excluded_domains: z.string().default(""),
+  excluded_titles: z.string().default(""),
+  banned_phrases: z.string().default(""),
+  countries_in_scope: z.string().default(""),
+  tools_by_industry: z.string().default(""),
+  reference_emails: z.string().default(""),
+});
+export type WorkflowForm = z.infer<typeof workflowFormSchema>;
+
+/** One line per industry: `keyword: sentence`. A line without a keyword (`default: ...`) is the fallback. */
+function parseTools(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of s.split(/\r?\n/)) {
+    const i = line.indexOf(":");
+    if (i > 0 && line.slice(i + 1).trim()) out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  if (!out.default) out.default = "We usually build those in React with a Node or Django back end and Postgres.";
+  return out;
+}
+
+export function workflowFormToConfig(f: WorkflowForm, existing: WorkflowConfig): WorkflowConfig {
+  return workflowConfigSchema.parse({
+    ...existing,
+    schedule_enabled: f.schedule_enabled, run_time_ist: f.run_time_ist, holidays: lines(f.holidays), approve_threshold: f.approve_threshold, daily_reveal_cap: f.daily_reveal_cap,
+    monthly_credit_cap: f.monthly_credit_cap, same_company_cooldown_days: f.same_company_cooldown_days, run_limit_minutes: f.run_limit_minutes, dry_run: f.dry_run, allow_risky: f.allow_risky,
+    postal_address: f.postal_address, optout_line: f.optout_line, white_label_line: f.white_label_line, style_guide: f.style_guide || existing.style_guide,
+    excluded_domains: lines(f.excluded_domains).map((d) => d.toLowerCase()), excluded_titles: lines(f.excluded_titles), banned_phrases: lines(f.banned_phrases),
+    countries_in_scope: lines(f.countries_in_scope), tools_by_industry: parseTools(f.tools_by_industry),
+    reference_emails: f.reference_emails.split(/\r?\n-{3,}\r?\n/).map((s) => s.trim()).filter(Boolean),
+  });
+}
+
+export function workflowConfigToForm(c: WorkflowConfig): Record<string, string> {
+  return {
+    run_time_ist: c.run_time_ist, holidays: c.holidays.join("\n"), approve_threshold: String(c.approve_threshold), daily_reveal_cap: String(c.daily_reveal_cap), monthly_credit_cap: String(c.monthly_credit_cap),
+    same_company_cooldown_days: String(c.same_company_cooldown_days), run_limit_minutes: String(c.run_limit_minutes), postal_address: c.postal_address, optout_line: c.optout_line,
+    white_label_line: c.white_label_line, style_guide: c.style_guide, excluded_domains: c.excluded_domains.join("\n"), excluded_titles: c.excluded_titles.join("\n"),
+    banned_phrases: c.banned_phrases.join("\n"), countries_in_scope: c.countries_in_scope.join("\n"), tools_by_industry: Object.entries(c.tools_by_industry).map(([k, v]) => `${k}: ${v}`).join("\n"),
+    reference_emails: c.reference_emails.join("\n---\n"),
+  };
+}

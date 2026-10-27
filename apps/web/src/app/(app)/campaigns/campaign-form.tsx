@@ -16,6 +16,7 @@ export interface CampaignDefaults {
   keywordsInclude: string;
   keywordsExclude: string;
   researchFirst: boolean;
+  leadSource: string;
   targetRoles: string;
   regions: string;
   scoreDraftMin: number;
@@ -42,6 +43,7 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
   keywordsInclude: "",
   keywordsExclude: "",
   researchFirst: false,
+  leadSource: "apollo",
   targetRoles: "",
   regions: "",
   scoreDraftMin: 70,
@@ -61,7 +63,7 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
 const STEPS = ["Audience (ICP)", "Roles & scoring", "Offer & message", "Sending"] as const;
 /** which step each field lives on, so validation errors can jump to the right page */
 const FIELD_STEP: Record<string, number> = {
-  name: 0, industries: 0, excludeIndustries: 0, countries: 0, employeeMin: 0, employeeMax: 0, keywordsInclude: 0, keywordsExclude: 0, researchFirst: 0,
+  name: 0, industries: 0, excludeIndustries: 0, countries: 0, employeeMin: 0, employeeMax: 0, keywordsInclude: 0, keywordsExclude: 0, researchFirst: 0, leadSource: 0,
   targetRoles: 1, regions: 1, scoreDraftMin: 1, scoreReviewMin: 1, dailyCap: 1,
   offerId: 2, tone: 2, cta: 2,
   inboxId: 3, researchDepth: 3, sendDays: 3, sendStart: 3, sendEnd: 3, status: 3,
@@ -121,6 +123,9 @@ export function CampaignForm({
       <section className={show(0)}>
         <Field label="Campaign name" name="name" error={err.name}>
           <TextInput name="name" defaultValue={defaults.name} />
+        </Field>
+        <Field label="Lead source" name="leadSource" error={err.leadSource} hint="Apollo: each run searches for people (free). CSV: each run works the leads you imported.">
+          <SelectInput name="leadSource" defaultValue={defaults.leadSource} options={[{ value: "apollo", label: "Apollo search" }, { value: "csv", label: "CSV import" }]} />
         </Field>
         <Field label="Target industries" name="industries" error={err.industries} hint="Comma or line separated, e.g. saas, logistics">
           <TextArea name="industries" rows={2} defaultValue={defaults.industries} />

@@ -5,7 +5,7 @@ import { REVEAL_FLAGS, WORKFLOW_SETTINGS_KEY, normText, parseWorkflowConfig } fr
 import { MissingPriceError } from "@outreach/core";
 import { CapReachedError, makeSpender } from "../src/spend";
 import { runOneJob } from "../src/jobs/runner";
-import { startRun } from "../src/jobs/scheduler";
+import { startRun } from "@outreach/db";
 import { sendJob } from "../src/jobs/send";
 import { loadLead } from "../src/pipeline/common";
 import { creditsUsed, revealWithGuard } from "../src/pipeline/reveal";
@@ -251,10 +251,11 @@ describe.skipIf(!enabled)("core flow (mock adapters, real database)", () => {
 
   it("SAFETY: the credit guard refuses unapproved leads, repeat reveals and anything past the daily or monthly cap", async () => {
     const cfg = parseWorkflowConfig({});
-    const paid = makeSpender(ctx, { campaignId: csvCampaignId, leadId: null, jobId: "00000000-0000-4000-8000-0000000000ac", step: "itest" });
+    const job = (await db.from("jobs").insert({ type: "workflow.run", idempotency_key: `${tag}-guard`, payload: {} as Json, campaign_id: csvCampaignId, status: "completed" }).select("id").single()).data!;
+    const paid = makeSpender(ctx, { campaignId: csvCampaignId, leadId: null, jobId: job.id, step: "itest" });
     // a person who could be revealed (Apollo id stored), with the lead in different states
     const c = await mkLead("rev", { first: "Reva", email: null });
-    await db.from("enrichment_results").insert({ contact_id: c.contactId, provider: "apollo", result: { person_id: "apollo-mock-001" } as Json, credits_used: 0 });
+    await db.from("enrichment_results").insert({ contact_id: c.contactId, provider: "apollo", result: { person_id: "apollo-mock-059" } as Json, credits_used: 0 });
     const batchId = (await db.from("pipeline_batches").select("id").eq("campaign_id", csvCampaignId).limit(1).single()).data!.id;
     const before = mockRevealLog.length;
 
@@ -284,7 +285,7 @@ describe.skipIf(!enabled)("core flow (mock adapters, real database)", () => {
 
     // a reveal that died half-way stays "uncertain" and is not retried
     const u = await mkLead("unc", { first: "Uri", email: null });
-    await db.from("enrichment_results").insert({ contact_id: u.contactId, provider: "apollo", result: { person_id: "apollo-mock-002" } as Json, credits_used: 0 });
+    await db.from("enrichment_results").insert({ contact_id: u.contactId, provider: "apollo", result: { person_id: "apollo-mock-058" } as Json, credits_used: 0 });
     await db.from("campaign_leads").update({ status: "approved", next_action: "reveal" }).eq("id", u.leadId);
     await db.from("credit_ledger").insert({ contact_id: u.contactId, campaign_lead_id: u.leadId, batch_id: batchId, provider: "apollo", status: "started", credits: 1, is_mock: true });
     expect(await revealWithGuard(ctx, paid, await loadLead(db, u.leadId), cfg, batchId, false)).toMatchObject({ ok: false, reason: "credit-uncertain" });

@@ -208,7 +208,7 @@ export const mockLlm: LlmAdapter = {
       }
       // invented facts, so the exact-quote check has something to reject
       if (req.prompt.includes("[mock:hallucinate]")) facts.push({ type: "funding", statement: "Raised a big round", source_url: "https://invented.example.com/", quote: "raised five hundred million from a famous fund", date: null });
-      if (req.prompt.includes("Company: Apollo Co 7 ")) for (let i = 0; i < 4; i++) facts.push({ type: "award", statement: "Won an award", source_url: "https://invented.example.com/", quote: `won the best workplace award ${i} years in a row`, date: null });
+      if (req.prompt.includes("(apollo-co-07.")) for (let i = 0; i < 6; i++) facts.push({ type: "award", statement: "Won an award", source_url: "https://invented.example.com/", quote: `won the best workplace award ${i} years in a row`, date: null });
       text = JSON.stringify({ facts, business_type: "software agency", developer_roles_open: devRoles, best_fact_index: facts.findIndex((f) => f.type === "hiring") });
     } else if (task === "write") {
       const get = (k: string) => new RegExp(`^${k}: (.*)$`, "m").exec(req.prompt)?.[1]?.trim() ?? "";
@@ -220,7 +220,7 @@ export const mockLlm: LlmAdapter = {
       const lines = [
         `Hi ${first},`,
         "",
-        fact ? `I read this on your site: "${fact[3]}"` : "I have been reading about your company.",
+        fact ? `I read this on the ${company} site: "${fact[3]}"` : "I have been reading about your company.",
         "",
         "How do you handle development work today when your own team is already at capacity?",
         "",

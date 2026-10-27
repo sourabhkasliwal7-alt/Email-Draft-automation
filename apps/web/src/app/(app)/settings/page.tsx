@@ -1,15 +1,17 @@
-import { formatKolkata } from "@outreach/core";
+import { formatKolkata, workflowConfigToForm } from "@outreach/core";
 import { EmptyState, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth";
 import { loadSettings } from "@/lib/settings";
+import { loadWorkflowSettings } from "@/lib/workflow-settings";
 import { createClient } from "@/lib/supabase/server";
 import { deleteSpendCap } from "./actions";
-import { PriceForm, SettingsForm, SpendCapForm } from "./forms";
+import { PriceForm, SettingsForm, SpendCapForm, WorkflowSettingsForm } from "./forms";
 
 export default async function SettingsPage() {
   await requireUser("settings.view");
   const supabase = await createClient();
+  const workflow = await loadWorkflowSettings(supabase);
   const [settings, { data: prices }, { data: caps }, { data: campaigns }, { data: audit }] = await Promise.all([
     loadSettings(supabase),
     supabase.from("price_table").select("id, provider, unit, usd_per_unit, effective_from").order("effective_from", { ascending: false }).limit(100),
@@ -22,6 +24,7 @@ export default async function SettingsPage() {
     <>
       <PageHeader title="Settings" description="Admin only. Every change here is written to the audit log." />
       <div className="space-y-8">
+        <WorkflowSettingsForm values={workflowConfigToForm(workflow)} scheduleEnabled={workflow.schedule_enabled} dryRun={workflow.dry_run} allowRisky={workflow.allow_risky} />
         <SettingsForm settings={settings} />
 
         <section className="space-y-3">

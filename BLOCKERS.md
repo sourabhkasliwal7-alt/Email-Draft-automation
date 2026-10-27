@@ -38,4 +38,6 @@ Standing rule: if a migration touching a schema we own is declined twice by the 
 
 | # | Item | Detail |
 |---|------|--------|
+| C-1 | Settings to fill before a REAL run | Settings > Daily run: postal address and opt-out line (drafts are refused without them), white-label line, example emails; a mailbox on the campaign; prices in the price table for every live provider |
+| C-2 | Live adapters | Anthropic, Serper, fetcher, Apollo, verifier and Gmail drafts are placeholders that fail loudly; everything runs on mocks until they are built (see PROGRESS.md Later) |
 | P4-2 | Node 22 | pg-boss 10.4.2 and @mastra/core 0.24.9 are pinned because local Node is 20; upgrade to pg-boss 12 / Mastra 1.x after installing Node 22 |

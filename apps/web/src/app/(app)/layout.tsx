@@ -5,17 +5,13 @@ import { requireUser } from "@/lib/auth";
 
 const NAV: (NavItem & { permission: Permission })[] = [
   { href: "/", label: "Dashboard", permission: "dashboard.view" },
+  { href: "/runs", label: "Runs", permission: "run.view" },
+  { href: "/attention", label: "Needs attention", permission: "attention.view" },
   { href: "/campaigns", label: "Campaigns", permission: "campaign.view" },
   { href: "/import", label: "Import", permission: "import.use" },
-  { href: "/leads", label: "Leads", permission: "lead.view" },
-  { href: "/review", label: "Review", permission: "review.view" },
-  { href: "/sending", label: "Sending", permission: "send.view" },
-  { href: "/follow-ups", label: "Follow-ups", permission: "followup.view" },
   { href: "/suppression", label: "Suppression", permission: "suppression.view" },
-  { href: "/inboxes", label: "Inboxes", permission: "inbox.view" },
+  { href: "/inboxes", label: "Mailboxes", permission: "inbox.view" },
   { href: "/offers", label: "Offers", permission: "offer.view" },
-  { href: "/jobs", label: "Jobs", permission: "jobs.view" },
-  { href: "/usage", label: "Usage & Cost", permission: "cost.view" },
   { href: "/settings", label: "Settings", permission: "settings.view" },
 ];
 

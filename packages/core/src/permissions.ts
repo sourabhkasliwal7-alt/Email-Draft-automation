@@ -22,6 +22,8 @@ export const PERMISSIONS = {
   "draft.approve_gmail": ["admin", "operator", "reviewer"],
   "lead.mark_dnc": ["admin", "operator", "reviewer"],
   "workflow.start": ["admin", "operator"],
+  "run.view": ["admin", "operator"],
+  "attention.view": ["admin", "operator", "reviewer"],
   "send.view": ["admin", "operator", "sender"],
   "send.approve": ["admin", "sender"],
   "send.execute": ["admin", "sender"],
