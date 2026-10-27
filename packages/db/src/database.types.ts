@@ -927,6 +927,7 @@ export type Database = {
       }
       inboxes: {
         Row: {
+          connected_at: string | null
           created_at: string
           daily_draft_cap: number
           daily_send_cap: number
@@ -936,6 +937,7 @@ export type Database = {
           email_lower: string | null
           encrypted_refresh_token: string | null
           id: string
+          last_error: string | null
           last_health_check: string | null
           min_seconds_between_sends: number
           scopes: string[]
@@ -943,6 +945,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          connected_at?: string | null
           created_at?: string
           daily_draft_cap?: number
           daily_send_cap?: number
@@ -952,6 +955,7 @@ export type Database = {
           email_lower?: string | null
           encrypted_refresh_token?: string | null
           id?: string
+          last_error?: string | null
           last_health_check?: string | null
           min_seconds_between_sends?: number
           scopes?: string[]
@@ -959,6 +963,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          connected_at?: string | null
           created_at?: string
           daily_draft_cap?: number
           daily_send_cap?: number
@@ -968,6 +973,7 @@ export type Database = {
           email_lower?: string | null
           encrypted_refresh_token?: string | null
           id?: string
+          last_error?: string | null
           last_health_check?: string | null
           min_seconds_between_sends?: number
           scopes?: string[]

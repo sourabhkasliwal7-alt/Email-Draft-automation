@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Json } from "@outreach/db";
-import { mockRevealLog } from "@outreach/adapters";
+import { MailboxNeedsReconnectError, mockRevealLog, type GmailAdapter } from "@outreach/adapters";
 import { REVEAL_FLAGS, WORKFLOW_SETTINGS_KEY, normText, parseWorkflowConfig } from "@outreach/core";
 import { MissingPriceError } from "@outreach/core";
+import type { WorkerCtx } from "../src/ctx";
+import { createGmailTokenStore } from "../src/gmail-store";
 import { CapReachedError, makeSpender } from "../src/spend";
 import { runOneJob } from "../src/jobs/runner";
 import { startRun } from "@outreach/db";
@@ -378,4 +380,146 @@ describe.skipIf(!enabled)("core flow (mock adapters, real database)", () => {
     await db.from("spend_caps").delete().eq("campaign_id", csvCampaignId);
     await db.from("price_table").delete().like("unit", `%${tag}%`);
   }, 60_000);
+
+  // ---------------------------------------------------------------- CSV as the lead source, and mailbox problems
+  const logOf = (batch: { totals: unknown }) => (batch.totals as { log: { step: string; count: number | null; note?: string }[] }).log;
+  const summaryOf = (batch: { totals: unknown }) => (batch.totals as { summary: { needsAttention: number; drafts: number; creditsUsed: number } }).summary;
+  async function mkCampaign(name: string, inbox: string) {
+    const offerId = (await db.from("campaigns").select("offer_id").eq("id", csvCampaignId).single()).data!.offer_id;
+    const { data } = await db
+      .from("campaigns")
+      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inbox, cta: "Open to a quick call next week?", daily_cap: 6, icp: { leadSource: "csv", requireEmail: true } as Json })
+      .select("id")
+      .single();
+    return data!.id;
+  }
+  async function runWith(c: WorkerCtx, campaignId: string) {
+    const batchId = await startRun(db, campaignId, { startedBy: null, label: `${tag} run` });
+    while (await runOneJob(c, { campaignIds: [campaignId] })) {
+      /* keep draining */
+    }
+    return (await db.from("pipeline_batches").select("*").eq("id", batchId).single()).data!;
+  }
+  /** a worker context that behaves like ADAPTER_GMAIL=live, with the Gmail adapter replaced by `behaviour` (no network) */
+  function liveGmailCtx(behaviour: (req: { inboxId: string; to: string; label?: string }) => Promise<{ draftId: string; messageIdHeader: string; labelApplied?: boolean; labelNote?: string }>) {
+    const calls: { inboxId: string; to: string; label?: string }[] = [];
+    const gmail: GmailAdapter = {
+      createDraft: async (req) => {
+        calls.push(req);
+        return behaviour(req);
+      },
+      listReplies: async () => [],
+    };
+    return { calls, ctx2: { ...ctx, modes: { ...ctx.modes, gmail: "live" as const }, adapters: { ...ctx.adapters, gmail } } as WorkerCtx };
+  }
+  const mkInbox = async (key: string, status: string) => (await db.from("inboxes").insert({ email: `${tag}-${key}@example.com`, display_name: key, status, daily_send_cap: 50, daily_draft_cap: 50, min_seconds_between_sends: 0 }).select("id").single()).data!.id;
+  const usageCount = async (campaignId: string) => (await db.from("usage_records").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId)).count ?? 0;
+
+  it("CSV source: a lead with no email and no Apollo id goes to Needs attention before any research is paid for; a lead with an email costs no credit and is verified", async () => {
+    // Apollo credits must not limit a CSV run at all
+    await setWorkflow({ excluded_domains: [D("excl")], daily_reveal_cap: 0, monthly_credit_cap: 0 });
+    const csv2 = await mkCampaign("csv-noemail", inboxId);
+    await mkLead("noemail", { first: "Nora", email: null, campaign: csv2 });
+    await mkLead("hasmail", { first: "Hal", campaign: csv2 });
+    const reveals = mockRevealLog.length;
+    const sentBefore = sender().sent.length;
+
+    const batch = await runWith(ctx, csv2);
+    expect(batch.status).toBe("completed");
+    // not a failed run: the lead is parked with the reason, and nothing was spent on it
+    expect(await lead(leads.noemail!.leadId)).toMatchObject({ status: "disqualified", reason_codes: ["no-email", expect.stringContaining("no email in the CSV")] });
+    expect((await db.from("usage_records").select("id").eq("campaign_lead_id", leads.noemail!.leadId)).data).toHaveLength(0);
+    expect((await db.from("email_drafts").select("id").eq("campaign_lead_id", leads.noemail!.leadId)).data).toHaveLength(0);
+    expect(summaryOf(batch).needsAttention).toBeGreaterThanOrEqual(1);
+    expect(logOf(batch).find((l) => l.step === "clean")!.note).toContain("no-email 1");
+
+    // the lead that has an email: no Apollo reveal, no credit, but the email is verified, then written and drafted
+    expect(await lead(leads.hasmail!.leadId)).toMatchObject({ status: "draft_ready" });
+    expect(mockRevealLog.length).toBe(reveals);
+    expect((await db.from("credit_ledger").select("id").eq("batch_id", batch.id)).data).toHaveLength(0);
+    expect(summaryOf(batch).creditsUsed).toBe(0);
+    expect((await db.from("usage_records").select("id").eq("campaign_lead_id", leads.hasmail!.leadId).eq("provider", "verifier")).data).toHaveLength(1);
+    expect((await db.from("usage_records").select("id").eq("campaign_lead_id", leads.hasmail!.leadId).eq("provider", "apollo")).data).toHaveLength(0);
+    expect(sender().sent).toHaveLength(sentBefore); // drafts only: nothing was sent
+    await setWorkflow({ excluded_domains: [D("excl")] });
+  }, 180_000);
+
+  it("a mailbox that needs reconnecting stops the run before any research or writing is paid for", async () => {
+    const inboxA = await mkInbox("down", "needs_reconnect");
+    const campaignA = await mkCampaign("down", inboxA);
+    await mkLead("d1", { first: "Dan", campaign: campaignA });
+    const { ctx2, calls } = liveGmailCtx(async () => ({ draftId: "never", messageIdHeader: "<never>" }));
+    const batch = await runWith(ctx2, campaignA);
+    expect(batch.status).toBe("completed");
+    expect((batch.totals as { target: number }).target).toBe(0);
+    expect(logOf(batch).find((l) => l.step === "target")!.note).toMatch(/needs to be reconnected.*Mailboxes/);
+    expect(await lead(leads.d1!.leadId)).toMatchObject({ status: "imported" });
+    expect(await usageCount(campaignA)).toBe(0);
+    expect(calls).toHaveLength(0);
+  }, 60_000);
+
+  it("revoked sign-in mid-run: that mailbox goes to 'needs reconnect' and writing stops, the OTHER mailbox keeps going, and after reconnecting the run continues without repeating paid steps", async () => {
+    const sentBefore2 = sender().sent.length;
+    const inboxA = await mkInbox("revoked", "active");
+    const inboxB = await mkInbox("healthy", "active");
+    const campaignA = await mkCampaign("mbx-a", inboxA);
+    const campaignB = await mkCampaign("mbx-b", inboxB);
+    for (const k of ["a1", "a2", "a3"]) await mkLead(k, { first: `Ann${k}`, campaign: campaignA });
+    for (const k of ["b1", "b2"]) await mkLead(k, { first: `Bea${k}`, campaign: campaignB });
+    const store = createGmailTokenStore(db);
+    let n = 0;
+    let aRevoked = true;
+    const { ctx2, calls } = liveGmailCtx(async (req) => {
+      if (req.inboxId === inboxA && aRevoked) {
+        await store.markNeedsReconnect(inboxA, "Google no longer accepts this sign-in (test)");
+        throw new MailboxNeedsReconnectError("revoked@example.com: Google no longer accepts this sign-in (test)");
+      }
+      return { draftId: `${tag}-d${++n}`, messageIdHeader: `<${tag}-${n}@x>`, labelApplied: false, labelNote: 'label "AI-Outreach" could not be put on the draft: Google only allows that with the gmail.modify permission, which was not requested' };
+    });
+
+    // mailbox A: the first draft hits the revoked sign-in, nothing else is written (no model spend for the other leads)
+    const first = await runWith(ctx2, campaignA);
+    expect(first.status).toBe("completed");
+    expect(calls.filter((c) => c.inboxId === inboxA)).toHaveLength(1);
+    const inbox = (await db.from("inboxes").select("status, last_error").eq("id", inboxA).single()).data!;
+    expect(inbox.status).toBe("needs_reconnect");
+    expect(inbox.last_error).toContain("no longer accepts");
+    const aLeads = (await db.from("campaign_leads").select("id, status, next_action, reason_codes").eq("campaign_id", campaignA)).data!;
+    expect(aLeads.filter((l) => l.status === "approved")).toHaveLength(3);
+    expect(aLeads.filter((l) => l.reason_codes[0] === "gmail-failed")).toHaveLength(1);
+    expect(aLeads.filter((l) => l.next_action === "draft")).toHaveLength(2);
+    expect((await db.from("email_drafts").select("id").in("campaign_lead_id", aLeads.map((l) => l.id))).data).toHaveLength(1);
+    expect(logOf(first).find((l) => l.step === "done")!.note).toContain("stopped writing");
+    expect(summaryOf(first).needsAttention).toBe(1);
+
+    // mailbox B is untouched: its campaign runs normally, and the label problem is explained in the run log
+    const other = await runWith(ctx2, campaignB);
+    expect(other.status).toBe("completed");
+    expect(summaryOf(other).drafts).toBe(2);
+    expect(logOf(other).find((l) => l.step === "done")!.note).toContain("gmail.modify");
+    expect((await db.from("inboxes").select("status").eq("id", inboxB).single()).data!.status).toBe("active");
+    const ev = (await db.from("lead_events").select("payload").eq("type", "gmail_draft_created").in("campaign_lead_id", (await db.from("campaign_leads").select("id").eq("campaign_id", campaignB)).data!.map((l) => l.id))).data!;
+    expect(ev).toHaveLength(2);
+    expect((ev[0]!.payload as { label_applied: boolean }).label_applied).toBe(false);
+
+    // still disconnected: a new run is refused up front
+    expect((((await runWith(ctx2, campaignA)).totals as { target: number }).target)).toBe(0);
+
+    // the person reconnects: the SAME leads continue, and no earlier paid step is repeated
+    await db.from("inboxes").update({ status: "active", last_error: null }).eq("id", inboxA);
+    aRevoked = false;
+    const stepsBefore = ((await db.from("usage_records").select("step").eq("campaign_id", campaignA)).data ?? []).reduce<Record<string, number>>((m, u) => ({ ...m, [u.step ?? ""]: (m[u.step ?? ""] ?? 0) + 1 }), {});
+    const resumed = await runWith(ctx2, campaignA);
+    expect(resumed.status).toBe("completed");
+    expect(logOf(resumed).find((l) => l.step === "clean")!.note).toContain("3 approved lead(s) continued");
+    expect((await db.from("campaign_leads").select("status, reason_codes").eq("campaign_id", campaignA)).data).toEqual([1, 2, 3].map(() => ({ status: "draft_ready", reason_codes: [] })));
+    expect(summaryOf(resumed).needsAttention).toBe(0);
+    // only the 2 missing emails were written (and checked); screening, research and verification were not paid for again
+    const countBy = (steps: string[]) => steps.reduce<Record<string, number>>((m, s) => ({ ...m, [s]: (m[s] ?? 0) + 1 }), {});
+    const after = countBy((await db.from("usage_records").select("step").eq("campaign_id", campaignA)).data!.map((u) => u.step ?? ""));
+    for (const step of ["screen", "research", "reveal"]) expect(after[step] ?? 0, step).toBe(stepsBefore[step] ?? 0);
+    expect(after.write ?? 0).toBeGreaterThan(stepsBefore.write ?? 0);
+    expect((await db.from("email_drafts").select("id").in("campaign_lead_id", aLeads.map((l) => l.id))).data).toHaveLength(3); // one draft per lead, never two
+    expect(sender().sent).toHaveLength(sentBefore2);
+  }, 290_000);
 });

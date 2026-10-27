@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { WORKFLOW_SETTINGS_KEY, parseWorkflowConfig, priceSchema, settingsSchema, spendCapSchema, workflowFormSchema, workflowFormToConfig } from "@outreach/core";
+import { queueAdapterTest, type TestProvider } from "@/lib/adapter-tests";
 import { guardAction, type ActionState } from "@/lib/auth";
 import { dbErrorMessage, validate } from "@/lib/forms";
 import { settingsToRows } from "@/lib/settings";
@@ -75,4 +76,15 @@ export async function saveWorkflowSettings(_prev: ActionState, formData: FormDat
   if (error) return { ok: false, message: dbErrorMessage(error) };
   revalidatePath("/settings");
   return { ok: true, message: "Run settings saved." };
+}
+
+const TEST_PROVIDERS: TestProvider[] = ["anthropic", "serper", "verifier"];
+
+/** "Test connection": queues one tiny live call for the worker (priced, cap-checked, usage recorded). It never changes an ADAPTER_* mode. */
+export async function testConnection(formData: FormData): Promise<void> {
+  const guard = await guardAction("settings.manage");
+  if (!guard.ok) return;
+  const provider = String(formData.get("provider") ?? "") as TestProvider;
+  if (TEST_PROVIDERS.includes(provider)) await queueAdapterTest(provider);
+  revalidatePath("/settings");
 }

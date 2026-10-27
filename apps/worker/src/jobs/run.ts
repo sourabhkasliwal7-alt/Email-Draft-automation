@@ -50,18 +50,25 @@ export async function computeTarget(ctx: WorkerCtx, campaign: Campaign, cfg: Wor
     .gte("created_at", since);
   let dailyLimit = Math.max(0, campaign.daily_cap - (campaignToday ?? 0));
   if (campaign.inbox_id) {
-    const inbox = must(await ctx.db.from("inboxes").select("daily_draft_cap").eq("id", campaign.inbox_id).single(), "load mailbox");
+    const inbox = must(await ctx.db.from("inboxes").select("daily_draft_cap, email, status").eq("id", campaign.inbox_id).single(), "load mailbox");
+    if (!dryRun && ctx.modes.gmail === "live" && inbox.status !== "active") {
+      // a mailbox that Google no longer accepts must not cost any research or writing money
+      const why = inbox.status === "needs_reconnect" ? "needs to be reconnected" : inbox.status === "disconnected" ? "is not connected to Google" : `is ${inbox.status}`;
+      return { target: 0, reasons: [`mailbox ${inbox.email} ${why}: fix it on the Mailboxes page, then start the run again`] };
+    }
     const { count: inboxToday } = await ctx.db.from("email_drafts").select("id", { count: "exact", head: true }).eq("inbox_id", campaign.inbox_id).not("gmail_draft_id", "is", null).gte("created_at", since);
     dailyLimit = Math.min(dailyLimit, Math.max(0, inbox.daily_draft_cap - (inboxToday ?? 0)));
   } else if (!dryRun) {
     dailyLimit = 0;
     reasons.push("no mailbox chosen on the campaign");
   }
+  // Apollo credits only limit campaigns that find people through Apollo: a CSV lead already has its email, so it never costs a credit
+  const usesCredits = icpSchema.parse(campaign.icp ?? {}).leadSource === "apollo";
   const used = await creditsUsed(ctx);
   const dailyCreditsLeft = Math.max(0, cfg.daily_reveal_cap - used.today);
   const monthlyLeft = Math.max(0, cfg.monthly_credit_cap - used.month);
-  if (!dryRun) dailyLimit = Math.min(dailyLimit, dailyCreditsLeft);
-  const total = dailyTarget([{ id: campaign.inbox_id ?? "none", dailyLimit }], dryRun ? Number.MAX_SAFE_INTEGER : monthlyLeft).total;
+  if (!dryRun && usesCredits) dailyLimit = Math.min(dailyLimit, dailyCreditsLeft);
+  const total = dailyTarget([{ id: campaign.inbox_id ?? "none", dailyLimit }], dryRun || !usesCredits ? Number.MAX_SAFE_INTEGER : monthlyLeft).total;
   if (total === 0 && reasons.length === 0) reasons.push("today's limits are already used (campaign, mailbox or credits)");
   return { target: total, reasons };
 }
@@ -113,34 +120,59 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
   const candidates = must(
     await ctx.db
       .from("campaign_leads")
-      .select("id, contact_id, status, contacts(id, company_id, job_title, country, dnc, email_lower, companies(id, domain))")
+      .select("id, contact_id, status, next_action, contacts(id, company_id, job_title, country, dnc, email_lower, companies(id, domain))")
       .eq("campaign_id", campaign.id)
-      .in("status", ["imported", "scored"])
+      .in("status", ["imported", "scored", "approved"])
       .order("created_at")
       .limit(1000),
     "load candidate leads",
   );
+  // An "approved" lead that is still waiting for its email, text or Gmail draft (a mailbox needed reconnecting, a limit paused the run)
+  // is picked up again and continues where it stopped: no step that already ran is repeated or paid for twice.
+  const WAITING = ["reveal", "draft", "deliver"];
+  const waiting = new Set(candidates.filter((l) => l.status === "approved" && WAITING.includes(l.next_action ?? "")).map((l) => l.id));
+  const open = candidates.filter((l) => l.status !== "approved" || waiting.has(l.id));
   const sup = await loadSuppression(ctx.db, campaign.id);
   const since = new Date(Date.now() - cfg.same_company_cooldown_days * 86_400_000).toISOString();
-  const recent = must(await ctx.db.from("email_drafts").select("campaign_leads!inner(contacts!inner(company_id))").gte("created_at", since).neq("status", "superseded").limit(5000), "load recent drafts");
-  const recentCompanies = new Set(recent.map((d) => (d as unknown as { campaign_leads: { contacts: { company_id: string | null } } }).campaign_leads.contacts.company_id).filter(Boolean) as string[]);
+  const recent = must(await ctx.db.from("email_drafts").select("campaign_lead_id, campaign_leads!inner(contacts!inner(company_id))").gte("created_at", since).neq("status", "superseded").limit(5000), "load recent drafts");
+  // a waiting lead's own draft must not make its company look "recently contacted"
+  const recentCompanies = new Set(
+    recent.filter((d) => !waiting.has(d.campaign_lead_id)).map((d) => (d as unknown as { campaign_leads: { contacts: { company_id: string | null } } }).campaign_leads.contacts.company_id).filter(Boolean) as string[],
+  );
+
+  // people who have no email and no Apollo id cannot get one, so they stop here (Needs attention) before any research is paid for
+  const contactIds = open.map((l) => l.contact_id);
+  const hasApolloId = new Set<string>();
+  for (let i = 0; i < contactIds.length; i += 200) {
+    const rows = must(await ctx.db.from("enrichment_results").select("contact_id").eq("provider", "apollo").in("contact_id", contactIds.slice(i, i + 200)), "load apollo ids");
+    for (const r of rows) hasApolloId.add(r.contact_id);
+  }
 
   const picked: string[] = [];
   const skippedBy: Record<string, number> = {};
   const seenCompanies = new Set<string>();
+  let resumed = 0;
   const skip = async (l: { id: string; contact_id: string }, reason: SkipReason, detail?: string) => {
     await skipLead(ctx.db, l, reason, detail);
     skippedBy[reason] = (skippedBy[reason] ?? 0) + 1;
   };
   const excludedDomains = cfg.excluded_domains.map((d) => d.toLowerCase().replace(/^www\./, ""));
   const excludedTitles = cfg.excluded_titles.map((t) => t.toLowerCase());
-  for (const l of candidates) {
+  for (const l of open) {
     if (picked.length >= want) break;
     const c = l.contacts as unknown as { company_id: string | null; job_title: string | null; country: string | null; dnc: boolean; email_lower: string | null; companies: { domain: string } | null } | null;
     if (!c) continue;
     const domain = c.companies?.domain ?? null;
     const emailDomain = c.email_lower?.split("@")[1];
     if (c.dnc || (c.email_lower && sup.emails.has(c.email_lower)) || (emailDomain && sup.domains.has(emailDomain)) || (domain && sup.domains.has(domain))) { await skip(l, "suppressed"); continue; }
+    if (waiting.has(l.id)) {
+      // already approved and paid for: continue it, but never past a suppression (checked above)
+      if (c.company_id) seenCompanies.add(c.company_id);
+      picked.push(l.id);
+      resumed++;
+      continue;
+    }
+    if (!c.email_lower && !hasApolloId.has(l.contact_id)) { await skip(l, "no-email", "no email in the CSV and no Apollo id to reveal one"); continue; }
     if (!domain) { await skip(l, "no-data", "no company website"); continue; }
     if (excludedDomains.some((d) => domain === d || domain.endsWith(`.${d}`))) { await skip(l, "excluded", "domain"); continue; }
     if (c.job_title && excludedTitles.some((t) => c.job_title!.toLowerCase().includes(t))) { await skip(l, "excluded", "title"); continue; }
@@ -149,7 +181,7 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
     if (c.company_id) seenCompanies.add(c.company_id);
     picked.push(l.id);
   }
-  return { picked, skippedBy };
+  return { picked, skippedBy, resumed };
 }
 
 // ---------------------------------------------------------------- the run
@@ -202,6 +234,9 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       return undefined;
     }
   };
+  /** set when Google stops accepting a mailbox mid-run: nothing more is written (no model spend) until it is reconnected */
+  let mailboxDown: string | null = null;
+  const labelNotes = new Set<string>();
   const spendFor = (lead: LeadBundle, step: string) => makeSpender(ctx, { campaignId: lead.campaign_id, leadId: lead.id, jobId: job.jobId, step });
   const reload = async () => (await db.from("pipeline_batches").select("*").eq("id", batch.id).single()).data ?? batch;
   const idsOf = () => ((batch.totals as { leadIds?: string[] } | null)?.leadIds ?? []);
@@ -232,8 +267,9 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           await patchTotals(db, batch.id, {}, { step: "search", count: 0, note: `Apollo search failed (${(e as Error).message}); using leads already in the campaign` });
         }
       }
-      const { picked, skippedBy } = await cleanAndSelect(ctx, campaign, cfg, want);
-      await patchTotals(db, batch.id, { leadIds: picked, fanout_done: true }, { step: "clean", count: picked.length, note: Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : undefined });
+      const { picked, skippedBy, resumed } = await cleanAndSelect(ctx, campaign, cfg, want);
+      const cleanNote = [resumed ? `${resumed} approved lead(s) continued from an earlier run` : "", Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""].filter(Boolean).join("; ");
+      await patchTotals(db, batch.id, { leadIds: picked, cleanSkipped: skippedBy, fanout_done: true }, { step: "clean", count: picked.length, note: cleanNote || undefined });
       await db.from("pipeline_batches").update({ fanout_done: true }).eq("id", batch.id);
       batch = await reload();
     }
@@ -325,6 +361,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
         safely({ id }, "write", async () => {
           let lead = await loadLead(db, id);
           if (lead.status !== "approved") return;
+          if (mailboxDown) return; // leave the lead as it is; the next run continues once the mailbox is reconnected
           if (lead.next_action === "draft") {
             const again = await suppressionHalt(ctx, lead);
             if (again) return skipLead(db, lead, "suppressed", again);
@@ -338,7 +375,11 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
             must(await db.from("campaign_leads").update({ next_action: "deliver" }).eq("id", id), "ready to deliver");
             lead = await loadLead(db, id);
           }
-          if (lead.next_action === "deliver") await deliverToGmail(ctx, lead, campaign.inbox_id);
+          if (lead.next_action === "deliver") {
+            const d = await deliverToGmail(ctx, lead, campaign.inbox_id);
+            if (d?.labelNote) labelNotes.add(d.labelNote);
+            if (d?.needsReconnect) mailboxDown = d.needsReconnect;
+          }
         }),
       );
     }
@@ -355,7 +396,8 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }
       return { stopped: why };
     }
-    await patchTotals(db, batch.id, { summary, errors }, { step: "done", count: summary.drafts, note: dryRun ? "dry run finished" : `${summary.drafts} Gmail draft(s) created` });
+    const notes = [dryRun ? "dry run finished" : `${summary.drafts} Gmail draft(s) created`, ...(mailboxDown ? [`stopped writing: ${mailboxDown}`] : []), ...labelNotes];
+    await patchTotals(db, batch.id, { summary, errors }, { step: "done", count: summary.drafts, note: notes.join("; ") });
     await db.from("pipeline_batches").update({ status: "completed", finished_at: new Date().toISOString() }).eq("id", batch.id).eq("status", "running");
     return summary;
   } finally {
@@ -364,27 +406,36 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
 }
 
 // ---------------------------------------------------------------- 6b. Gmail draft in the right mailbox, label AI-Outreach, bracketed note on top
-async function deliverToGmail(ctx: WorkerCtx, lead: LeadBundle, inboxId: string | null) {
+async function deliverToGmail(ctx: WorkerCtx, lead: LeadBundle, inboxId: string | null): Promise<{ labelNote?: string; needsReconnect?: string } | undefined> {
   const { db } = ctx;
   const draft = must(await db.from("email_drafts").select("*").eq("campaign_lead_id", lead.id).eq("step", 0).order("version", { ascending: false }).limit(1).single(), "load draft");
   const contact = lead.contacts!;
   if (draft.gmail_draft_id) {
     must(await db.from("campaign_leads").update({ status: "draft_ready", next_action: "wait-send" }).eq("id", lead.id), "mark drafted");
-    return;
+    return undefined;
   }
   const halt = await suppressionHalt(ctx, lead);
-  if (halt || !contact.email) return skipLead(db, lead, "suppressed", halt ?? "no email");
-  if (!inboxId) return skipLead(db, lead, "gmail-failed", "no mailbox chosen on the campaign");
+  if (halt || !contact.email) {
+    await skipLead(db, lead, "suppressed", halt ?? "no email");
+    return undefined;
+  }
+  if (!inboxId) {
+    await skipLead(db, lead, "gmail-failed", "no mailbox chosen on the campaign");
+    return undefined;
+  }
   const note = bracketNote({ score: lead.lead_score, trigger: lead.trigger, source: lead.trigger_source });
   try {
     const res = await ctx.adapters.gmail.createDraft({ inboxId, to: contact.email, subject: draft.subject, bodyText: `${note}\n\n${draft.body_text}`, label: GMAIL_LABEL });
     must(await db.from("email_drafts").update({ gmail_draft_id: res.draftId, gmail_message_id_header: res.messageIdHeader, inbox_id: inboxId, status: "approved" }).eq("id", draft.id).is("gmail_draft_id", null), "save gmail draft id");
-    must(await db.from("campaign_leads").update({ status: "draft_ready", next_action: "wait-send" }).eq("id", lead.id), "mark drafted");
-    await leadEvent(db, lead, "gmail_draft_created", { draft_id: draft.id, gmail_draft_id: res.draftId, label: GMAIL_LABEL });
+    must(await db.from("campaign_leads").update({ status: "draft_ready", next_action: "wait-send", reason_codes: [] }).eq("id", lead.id), "mark drafted");
+    await leadEvent(db, lead, "gmail_draft_created", { draft_id: draft.id, gmail_draft_id: res.draftId, label: GMAIL_LABEL, label_applied: res.labelApplied ?? null, label_note: res.labelNote ?? null });
+    return { labelNote: res.labelNote };
   } catch (e) {
     // the draft text is saved; the lead stays approved and shows in "Needs attention" until a later run retries
     must(await db.from("campaign_leads").update({ reason_codes: ["gmail-failed", (e as Error).message.slice(0, 200)] }).eq("id", lead.id), "note gmail failure");
     await leadEvent(db, lead, "gmail_draft_failed", { reason: (e as Error).message });
+    // a revoked or expired sign-in affects this mailbox only: stop writing for it; campaigns on other mailboxes are unaffected
+    return (e as Error).name === "MailboxNeedsReconnectError" ? { needsReconnect: (e as Error).message.slice(0, 200) } : undefined;
   }
 }
 
@@ -397,7 +448,11 @@ export async function buildSummary(ctx: WorkerCtx, batchId: string, ids: string[
   }
   const skipped: Record<string, number> = {};
   for (const l of leads.filter((x) => x.status === "disqualified")) skipped[l.reason_codes[0] ?? "other"] = (skipped[l.reason_codes[0] ?? "other"] ?? 0) + 1;
-  const { data: batch } = await db.from("pipeline_batches").select("started_at, campaign_id").eq("id", batchId).single();
+  const { data: batch } = await db.from("pipeline_batches").select("started_at, campaign_id, totals").eq("id", batchId).single();
+  // leads the clean step already parked (suppressed, no email, excluded ...) are part of today's numbers too
+  const cleanSkipped = ((batch?.totals as { cleanSkipped?: Record<string, number> } | null)?.cleanSkipped ?? {});
+  for (const [reason, n] of Object.entries(cleanSkipped)) skipped[reason] = (skipped[reason] ?? 0) + n;
+  const cleanAttention = Object.entries(cleanSkipped).filter(([reason]) => ATTENTION_REASONS.includes(reason as SkipReason)).reduce((a, [, n]) => a + n, 0);
   const { data: ledger } = await db.from("credit_ledger").select("credits").eq("batch_id", batchId);
   const { data: usage } = await db.from("usage_records").select("cost_usd").eq("campaign_id", batch?.campaign_id ?? "").gte("created_at", batch?.started_at ?? new Date(0).toISOString());
   const drafts = leads.filter((l) => l.status === "draft_ready").length;
@@ -407,7 +462,7 @@ export async function buildSummary(ctx: WorkerCtx, batchId: string, ids: string[
     leads: ids.length,
     byStatus: Object.fromEntries([...new Set(leads.map((l) => l.status))].map((s) => [s, leads.filter((l) => l.status === s).length])),
     skipped,
-    needsAttention: leads.filter((l) => (l.status === "disqualified" && ATTENTION_REASONS.includes(l.reason_codes[0] as SkipReason)) || l.reason_codes[0] === "gmail-failed").length,
+    needsAttention: leads.filter((l) => (l.status === "disqualified" && ATTENTION_REASONS.includes(l.reason_codes[0] as SkipReason)) || l.reason_codes[0] === "gmail-failed").length + cleanAttention,
     drafts,
     creditsUsed: (ledger ?? []).reduce((a, r) => a + r.credits, 0),
     costUsd: Number((usage ?? []).reduce((a, r) => a + Number(r.cost_usd), 0).toFixed(4)),

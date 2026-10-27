@@ -5,6 +5,7 @@ import pg from "pg";
 import { createAdapters } from "@outreach/adapters";
 import { createServiceClient, recordHeartbeat } from "@outreach/db";
 import { loadWorkerEnv } from "./env";
+import { createGmailTokenStore } from "./gmail-store";
 import { startJobLoop } from "./jobs/runner";
 import { scheduleTick } from "./jobs/scheduler";
 import { startWorker } from "./worker";
@@ -28,7 +29,7 @@ async function main() {
       else console.log(`heartbeat (no database configured) ${new Date().toISOString()}`);
     },
   });
-  const adapters = createAdapters(process.env);
+  const adapters = createAdapters(process.env, db ? { gmailTokens: createGmailTokenStore(db) } : {});
   const pool = process.env.DATABASE_URL?.startsWith("postgres") ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 }) : null;
   const ctx = db ? { db, pg: pool, adapters, modes: adapters.modes, log: console.log, workerId: env.workerId } : null;
   const jobs = ctx && !process.argv.includes("--once") ? startJobLoop(ctx) : null;

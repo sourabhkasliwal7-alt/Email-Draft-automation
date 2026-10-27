@@ -15,6 +15,18 @@ export const LIVE_REQUIRED_VARS: Record<AdapterName, string[]> = {
   gmail: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"],
 };
 
+/** Other names a key is accepted under (ZeroBounce users often call it ZEROBOUNCE_API_KEY). */
+export const ENV_ALIASES: Record<string, string[]> = { VERIFIER_API_KEY: ["ZEROBOUNCE_API_KEY"] };
+
+/** The value of a variable, or of one of its aliases. */
+export function envValue(env: Record<string, string | undefined>, name: string): string | undefined {
+  for (const n of [name, ...(ENV_ALIASES[name] ?? [])]) {
+    const v = env[n]?.trim();
+    if (v) return v;
+  }
+  return undefined;
+}
+
 export class EnvError extends Error {
   constructor(public readonly problems: string[]) {
     super(`Invalid environment:\n  - ${problems.join("\n  - ")}`);
@@ -62,7 +74,7 @@ export function assertAdapterEnv(env: Record<string, string | undefined>): Recor
   for (const name of ADAPTER_NAMES) {
     if (modes[name] !== "live") continue;
     for (const v of LIVE_REQUIRED_VARS[name]) {
-      if (!env[v]?.trim()) problems.push(`${v} is required because ${envVarFor(name)}=live`);
+      if (!envValue(env, v)) problems.push(`${v}${ENV_ALIASES[v] ? ` (or ${ENV_ALIASES[v]!.join(", ")})` : ""} is required because ${envVarFor(name)}=live`);
     }
   }
   if (problems.length) throw new EnvError(problems);

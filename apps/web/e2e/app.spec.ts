@@ -138,7 +138,8 @@ test("admin saves settings, prices and caps; every change is audited", async ({ 
   await drafting.fill(`e2e-model-${RUN}`);
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByTestId("form-message").first()).toHaveText("Settings saved.");
-  await expect(page.getByLabel("SENDING_ENABLED (master switch: nothing is sent while this is off)")).not.toBeChecked();
+  // the sending switch is hidden in the app (nothing can be sent): saving settings must not offer or change it
+  await expect(page.getByLabel(/SENDING_ENABLED/)).toHaveCount(0);
 
   await drafting.fill(original);
   await page.getByRole("button", { name: "Save settings" }).click();

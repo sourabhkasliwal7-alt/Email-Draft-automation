@@ -83,7 +83,7 @@ export const NEXT_ACTIONS = ["research", "reveal", "draft", "deliver", "wait-sen
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 
 /** Skip reasons that need a person (shown in "Needs attention"); the others are normal outcomes of the funnel. */
-export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed"];
+export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed", "no-email"];
 
 export const SKIP_LABELS: Record<SkipReason, string> = {
   "screen-failed": "Does not look like a fit (quick check)",
@@ -91,7 +91,7 @@ export const SKIP_LABELS: Record<SkipReason, string> = {
   "no-verified-fact": "No fact that could be checked word for word",
   "below-threshold": "Score below the approval cut-off",
   "over-quota": "Good score, but today's number was already filled",
-  "no-email": "No email could be revealed",
+  "no-email": "No email: add one to the CSV (or connect Apollo to reveal it)",
   "bad-email": "Email failed verification",
   "role-address": "Role address (info@, sales@ ...), not a person",
   suppressed: "Do not contact / suppressed",

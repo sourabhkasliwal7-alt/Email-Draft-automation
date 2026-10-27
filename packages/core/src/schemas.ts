@@ -232,7 +232,7 @@ export const DEFAULT_SETTINGS: SettingsInput = {
 
 export const inboxLimitsSchema = z.object({
   displayName: optionalText,
-  status: z.enum(["disconnected", "active", "paused", "error"]),
+  status: z.enum(["disconnected", "active", "paused", "error", "needs_reconnect"]),
   dailyDraftCap: count("Daily draft cap", 10000),
   dailySendCap: count("Daily send cap", 10000),
   minSecondsBetweenSends: count("Delay between sends", 86400),

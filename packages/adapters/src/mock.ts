@@ -254,7 +254,7 @@ export function createMockGmail(): GmailAdapter & { drafts: Map<string, { to: st
     async createDraft(req) {
       const draftId = `mock-draft-${drafts.size + 1}-${Math.random().toString(36).slice(2, 7)}`;
       drafts.set(draftId, { to: req.to, subject: req.subject, bodyText: req.bodyText, label: req.label });
-      return { draftId, messageIdHeader: `<${draftId}@mock.invalid>` };
+      return { draftId, messageIdHeader: `<${draftId}@mock.invalid>`, labelApplied: Boolean(req.label) };
     },
     async listReplies() {
       return [];

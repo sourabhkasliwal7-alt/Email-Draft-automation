@@ -99,7 +99,14 @@ export interface GmailDraftRequest {
 }
 /** Draft creation and reply reading. Contains NO send capability by design. */
 export interface GmailAdapter {
-  createDraft(req: GmailDraftRequest): Promise<{ draftId: string; messageIdHeader: string }>;
+  createDraft(req: GmailDraftRequest): Promise<{
+    draftId: string;
+    messageIdHeader: string;
+    /** whether the label was put on the draft; the draft itself is saved either way */
+    labelApplied?: boolean;
+    /** why the label was not applied, for the run log */
+    labelNote?: string;
+  }>;
   listReplies(req: { inboxId: string; sinceIso: string }): Promise<
     { messageId: string; threadId: string; receivedAt: string; snippet: string; kind: "reply" | "auto_reply" | "bounce" | "opt_out" }[]
   >;

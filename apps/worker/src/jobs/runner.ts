@@ -3,6 +3,7 @@ import { RetryLater, type JobInfo, type WorkerCtx } from "../ctx";
 import { refreshBatch } from "../pipeline/common";
 import { CapReachedError } from "../spend";
 import { runImportJob } from "./import";
+import { adapterTestJob } from "./adapter-test";
 import { sendJob } from "./send";
 import { workflowRunJob } from "./run";
 
@@ -22,6 +23,7 @@ export const HANDLERS: Record<string, Handler> = {
   "import.run": (ctx, payload: Parameters<typeof runImportJob>[1]) => runImportJob(ctx.db, payload, ctx.log),
   "workflow.run": workflowRunJob as Handler,
   "send.run": sendJob as Handler,
+  "adapter.test": adapterTestJob as Handler,
 };
 
 /** Puts jobs back in the queue when the worker that held them stopped without finishing. */

@@ -7,12 +7,27 @@
 | 2 | Auth and setup screens | DONE | 2026-10-26 |
 | 3 | CSV/XLSX import | DONE | 2026-10-26 |
 | CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
+| LIVE-1 | CSV runs, Gmail connection, live Claude/Serper/ZeroBounce/fetcher | built; adapters stay on mock until you switch them | 2026-10-27 |
 | 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## LIVE-1 - CSV runs, Gmail connection, live Claude / Serper / ZeroBounce / page fetcher (2026-10-27)
+
+**CSV as the lead source** (same engine, `apps/worker/src/jobs/run.ts`): a CSV campaign works the leads you imported through clean -> quick check -> research + exact-quote facts -> score -> approve -> verify -> write -> Gmail draft.
+- A lead that already has an email never reaches Apollo and never costs a credit; its email is verified with the verifier as usual. Apollo credit limits no longer limit a CSV run (only Apollo-sourced campaigns).
+- A lead with no email and no Apollo id goes to **Needs attention** ("No email: add one to the CSV ...") in the clean step, before any research is paid for. The run still completes; the daily summary counts it.
+- Approved leads that are still waiting for a draft (a mailbox needed reconnecting, a limit paused a run) are picked up again by the next run and continue where they stopped; no earlier paid step repeats.
+
+**Gmail connection** (`packages/adapters/src/live/`, `apps/web/src/app/api/google/`): `/api/google/connect` + `/api/google/callback`, redirect URI = `NEXT_PUBLIC_SITE_URL` + `/api/google/callback`. Scopes: `gmail.compose` + `gmail.labels` only. State/CSRF = random nonce in a signed 10-minute HttpOnly cookie that also pins the mailbox and the admin who started it. Nothing is stored unless the cookie and `state` match, the same admin is signed in, Google granted a refresh token and both scopes, and the Gmail address that signed in is the mailbox being connected (otherwise that grant is revoked). Refresh tokens: AES-256-GCM with `TOKEN_ENCRYPTION_KEY`, the mailbox id bound in as authenticated data, stored with the service role only. Mailboxes page: Connect / Reconnect / Disconnect per mailbox (two separate Gmail accounts = two mailboxes), status, expiry warning while the Google app is in Testing mode (`GOOGLE_APP_PUBLISHING`), "Create test draft" (addressed to the mailbox itself; nothing is sent). A revoked or expired sign-in turns that mailbox only into `needs_reconnect`; its run stops writing (no model spend) and other mailboxes keep working. Migration `20261027130000_gmail_connection.sql` (applied through the MCP): `inboxes.connected_at`, `last_error`, status `needs_reconnect`.
+- Sending stays off and unbuilt: the live adapter has no send call (the architecture test still passes).
+
+**Live adapters, one file each** (`ADAPTER_*` untouched, still mock): Claude (official `@anthropic-ai/sdk` 1.3.0, model from Settings), Serper, ZeroBounce (`VERIFIER_API_KEY` or `ZEROBOUNCE_API_KEY`), page fetcher. Settings > Connections has **Test connection** for Claude, Serper and ZeroBounce: one tiny real call through the same spend guard (price row required, caps checked, usage and cost recorded), whatever `ADAPTER_*` says.
+
+**Tests added:** adapters (crypto, OAuth state, Gmail with a scripted fetch incl. two mailboxes, MIME, providers, fetcher/robots), web (callback/connect routes: forged state, wrong account, missing scope ...), worker (Test connection, no network), worker integration (CSV no-email and verify without credit; mailbox needs reconnect; revoke mid-run, other mailbox continues, resume), Playwright `google.spec.ts`.
 
 ## Later (deferred on purpose, in rough priority order)
 
 1. **Live adapters** (read each installed SDK's docs first): Anthropic (screen/extract on the cheap model, write on the strong model), Serper, the page fetcher (robots.txt, no paywalls/logins/CAPTCHAs), Apollo (search free; reveal with the REVEAL_FLAGS only), the email verifier, Gmail drafts (create draft in the right mailbox + label `AI-Outreach`). Each is a single file behind the existing interface; `ADAPTER_<NAME>=live` selects it. Enter the provider prices in Settings first: a live call without a price row is refused.
-2. Gmail OAuth connect screen (inboxes hold the encrypted refresh token; AES-256-GCM).
+2. (done in LIVE-1) Gmail OAuth connect screen.
 3. SRS 4.8 tracking and follow-ups; reply tracking; opt-out handling from replies.
 4. Crunchbase (still behind `CRUNCHBASE_ENABLED`, off).
 5. Sending UI (the send job, approval records and all guards exist and are tested; the screens are hidden and `SENDING_ENABLED` is off). The Review and Sending pages from Phase 2 still exist at /review and /sending but are not in the navigation.

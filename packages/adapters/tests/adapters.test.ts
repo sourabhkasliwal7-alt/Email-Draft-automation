@@ -34,8 +34,8 @@ describe("adapter selection", () => {
   });
 
   it("a configured live adapter that is not built yet fails loudly instead of doing nothing", () => {
-    const a = createAdapters({ ADAPTER_SEARCH: "live", SERPER_API_KEY: "k" });
-    expect(() => a.search.search({ query: "x" })).toThrow(LiveAdapterNotImplementedError);
+    const a = createAdapters({ ADAPTER_APOLLO: "live", APOLLO_API_KEY: "k" });
+    expect(() => a.apollo.searchPeople({ titles: [], seniorities: [], keywords: [], locations: [] }, 1)).toThrow(LiveAdapterNotImplementedError);
   });
 });
 

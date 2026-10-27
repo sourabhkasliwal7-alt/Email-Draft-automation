@@ -7,10 +7,10 @@ Nothing blocks progress. The build continues on mock adapters; the items below n
 | # | Need | Where to put it | Needed by |
 |---|------|-----------------|-----------|
 | 1 | Node 22+ recommended (supabase-js deprecates Node 20; CI and Docker use 22; local Node 20 works through a `ws` fallback) | install Node 22 | before deploy |
-| 2 | Anthropic API key | `.env` `ANTHROPIC_API_KEY`, `ADAPTER_LLM=live` | Phase 9 |
-| 3 | Serper API key | `.env` `SERPER_API_KEY`, `ADAPTER_SEARCH=live` | Phase 6 |
-| 4 | Google Cloud OAuth client + Gmail API; `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`) | `.env` | Phase 10 |
-| 5 | Email verifier + Apollo keys; Crunchbase licence decision | `.env` | Phases 7-8 |
+| 2 | Anthropic API key | `.env` `ANTHROPIC_API_KEY` (set). Live adapter built 2026-10-27; switch with `ADAPTER_LLM=live` only after Settings > Test connection works and prices are entered | before the first real run |
+| 3 | Serper API key | `.env` `SERPER_API_KEY` (set). Live adapter built; `ADAPTER_SEARCH=live` after Test connection | before the first real run |
+| 4 | Google Cloud OAuth client + Gmail API; `TOKEN_ENCRYPTION_KEY` | `.env` (all set). Connect flow built 2026-10-27: see D5 for the Google Cloud steps | before the first real run |
+| 5 | ZeroBounce key (`VERIFIER_API_KEY`, or `ZEROBOUNCE_API_KEY`: both work) | set; live adapter built, `ADAPTER_VERIFIER=live` after Test connection. The Apollo key and the Crunchbase licence decision are still open (CSV leads need neither) | when Apollo search is wanted |
 | 6 | Hosting: Vercel (web) + VPS/Railway/Render (worker) | n/a | Phase 13 |
 | 7 | First admin: `pnpm user:create --email you@company.com --role admin` | terminal | now |
 | 8 | `pnpm e2e` creates five `e2e-*@example.com` accounts in the Supabase project (disabled and banned afterwards). Use a separate dev project if you do not want that in the main one | n/a | optional |
@@ -25,6 +25,7 @@ Migrations never write into Supabase-managed schemas (storage, auth, realtime, v
 | D2 | Leaked password protection | Authentication > Sign In / Providers > Email > enable "Prevent use of leaked passwords" (may need a paid plan; this is the only open security advisor) | open |
 | D3 | Close self sign-up | Authentication > Sign In / Providers > turn OFF "Allow new users to sign up" (users are created with `pnpm user:create`; a self-signed-up user has no profile and no access anyway) | open |
 | D4 | Redirect URL for magic links (only if you use them) | Authentication > URL Configuration > add `http://localhost:3000/auth/callback` and your production URL | open |
+| D5 | Google Cloud, for Connect Gmail | APIs & Services > Credentials > your Web client: Authorized JavaScript origins `http://localhost:3000`; Authorized redirect URIs exactly `http://localhost:3000/api/google/callback` (also shown on the Mailboxes page; for production use your own https origin + `/api/google/callback`). OAuth consent screen > Data access: add scopes `gmail.compose` and `gmail.labels`. Audience: add every Gmail address you will connect as a Test user. While the status is Testing, Google ends each sign-in after 7 days (the app warns and shows "Needs reconnect"); set "In production" to stop that, then `GOOGLE_APP_PUBLISHING=production` in `.env` | open |
 
 ## SQL for owner to run
 
@@ -40,4 +41,6 @@ Standing rule: if a migration touching a schema we own is declined twice by the 
 |---|------|--------|
 | C-1 | Settings to fill before a REAL run | Settings > Daily run: postal address and opt-out line (drafts are refused without them), white-label line, example emails; a mailbox on the campaign; prices in the price table for every live provider |
 | C-2 | Live adapters | Anthropic, Serper, fetcher, Apollo, verifier and Gmail drafts are placeholders that fail loudly; everything runs on mocks until they are built (see PROGRESS.md Later) |
+| G-1 | Gmail label `AI-Outreach` | With only `gmail.compose` + `gmail.labels` (as chosen) Google creates the label but does NOT allow putting it on a draft (that needs `gmail.modify`). Drafts are created either way; the run log says "label ... not applied". To get the label on every draft, add `gmail.modify` to `GOOGLE_SCOPES` in `packages/adapters/src/live/google.ts` and to the consent screen, then reconnect each mailbox | decision |
+| G-2 | Page fetcher | `ADAPTER_FETCHER=live` is built too (public pages only, robots.txt honoured, logins/paywalls/CAPTCHAs reported as unreadable). While it stays `mock`, the research text is invented demo text, so it must be `live` for any real run | before the first real run |
 | P4-2 | Node 22 | pg-boss 10.4.2 and @mastra/core 0.24.9 are pinned because local Node is 20; upgrade to pg-boss 12 / Mastra 1.x after installing Node 22 |
