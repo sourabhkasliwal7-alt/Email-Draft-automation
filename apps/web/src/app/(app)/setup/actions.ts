@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import type { z } from "zod";
 import { WORKFLOW_SETTINGS_KEY, mergeWorkflowConfig, parseWorkflowConfig, priceSchema, spendCapSchema, type WorkflowConfig } from "@outreach/core";
 import { queueAdapterTest, type TestProvider } from "@/lib/adapter-tests";
 import { guardAction, type ActionState } from "@/lib/auth";
+import { DEMO_CAMPAIGN_ID, DEMO_CAMPAIGN_NAME, DEMO_CASE_STUDY_IDS, DEMO_INBOX_EMAIL, DEMO_INBOX_ID, DEMO_OFFER_IDS } from "@/lib/demo-data";
 import { dbErrorMessage, validate } from "@/lib/forms";
 import {
   creditsFormSchema,
@@ -108,4 +110,26 @@ export async function testConnection(formData: FormData): Promise<void> {
   const provider = String(formData.get("provider") ?? "") as TestProvider;
   if (TEST_PROVIDERS.includes(provider)) await queueAdapterTest(provider);
   revalidatePath("/setup");
+}
+
+/**
+ * "Archive demo data": hides the sample records that come with a fresh database (the demo mailbox, the "Demo campaign", the two demo offers and
+ * their case studies). It is a soft delete (deleted_at is set, nothing is removed) and touches nothing else. Needs the same
+ * permissions as archiving each of those by hand.
+ */
+export async function archiveDemoData(): Promise<void> {
+  const offers = await guardAction("offer.manage");
+  const campaigns = await guardAction("campaign.manage");
+  const inboxes = await guardAction("inbox.manage");
+  if (!offers.ok || !campaigns.ok || !inboxes.ok) redirect("/setup?tab=offers&notice=demo_forbidden");
+  const now = new Date().toISOString();
+  const failed = [
+    // the campaign first: it points at the mailbox and the offer
+    (await campaigns.supabase.from("campaigns").update({ deleted_at: now, status: "archived" }).or(`id.eq.${DEMO_CAMPAIGN_ID},name.eq."${DEMO_CAMPAIGN_NAME}"`).is("deleted_at", null)).error,
+    (await inboxes.supabase.from("inboxes").update({ deleted_at: now }).or(`id.eq.${DEMO_INBOX_ID},email_lower.eq."${DEMO_INBOX_EMAIL}"`).is("deleted_at", null)).error,
+    (await offers.supabase.from("case_studies").update({ deleted_at: now }).in("id", [...DEMO_CASE_STUDY_IDS]).is("deleted_at", null)).error,
+    (await offers.supabase.from("offers").update({ deleted_at: now }).in("id", [...DEMO_OFFER_IDS]).is("deleted_at", null)).error,
+  ].filter(Boolean);
+  revalidatePath("/setup");
+  redirect(`/setup?tab=offers&notice=${failed.length ? "demo_failed" : "demo_archived"}`);
 }

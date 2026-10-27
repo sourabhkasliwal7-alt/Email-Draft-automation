@@ -92,14 +92,14 @@ describe("/api/google/connect", () => {
   });
   it("refuses anyone who is not an admin, an unknown mailbox, and a missing configuration", async () => {
     session.current = reviewer;
-    expect(location(await connect(new NextRequest(`http://localhost:3000/api/google/connect?inbox=${INBOX}`))).search).toBe("?gmail=forbidden");
+    expect(location(await connect(new NextRequest(`http://localhost:3000/api/google/connect?inbox=${INBOX}`))).search).toBe("?tab=gmail&gmail=forbidden");
     session.current = admin;
-    expect(location(await connect(new NextRequest("http://localhost:3000/api/google/connect?inbox=not-a-uuid"))).search).toBe("?gmail=no_inbox");
+    expect(location(await connect(new NextRequest("http://localhost:3000/api/google/connect?inbox=not-a-uuid"))).search).toBe("?tab=gmail&gmail=no_inbox");
     store.inbox = null;
-    expect(location(await connect(new NextRequest(`http://localhost:3000/api/google/connect?inbox=${INBOX}`))).search).toBe("?gmail=no_inbox");
+    expect(location(await connect(new NextRequest(`http://localhost:3000/api/google/connect?inbox=${INBOX}`))).search).toBe("?tab=gmail&gmail=no_inbox");
     delete process.env.GOOGLE_CLIENT_SECRET;
     const res = await connect(new NextRequest(`http://localhost:3000/api/google/connect?inbox=${INBOX}`));
-    expect(location(res).search).toBe("?gmail=not_configured");
+    expect(location(res).search).toBe("?tab=gmail&gmail=not_configured");
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 });
@@ -108,7 +108,7 @@ describe("/api/google/callback", () => {
   it("connects the mailbox: stores an ENCRYPTED refresh token for exactly that mailbox, with the scopes, and clears the cookie", async () => {
     const g = google();
     const res = await callback(callbackReq("code=abc&state=nonce-1", cookieFor()));
-    expect(location(res).search).toBe("?gmail=connected");
+    expect(location(res).search).toBe("?tab=gmail&gmail=connected");
     expect(store.updates).toHaveLength(1);
     const u = store.updates[0]!;
     expect(u.status).toBe("active");
@@ -133,7 +133,7 @@ describe("/api/google/callback", () => {
       callbackReq("code=abc&state=nonce-1", cookieFor({ t: Date.now() - 11 * 60_000 })), // expired
       callbackReq("code=abc&state=nonce-1", signOAuthCookie({ n: "nonce-1", i: INBOX, u: "admin-1", t: Date.now() }, Buffer.alloc(32, 9).toString("base64"))), // signed with another key
     ]) {
-      expect(location(await callback(req)).search).toBe("?gmail=state");
+      expect(location(await callback(req)).search).toBe("?tab=gmail&gmail=state");
     }
     expect(store.updates).toEqual([]);
     expect(g.fetchMock).not.toHaveBeenCalled();
@@ -142,44 +142,44 @@ describe("/api/google/callback", () => {
   it("only the same admin who started the flow can finish it", async () => {
     google();
     session.current = reviewer;
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=session");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=session");
     session.current = { state: "ok", user: { ...admin.user, id: "admin-2" } };
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=session");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=session");
     session.current = { state: "anonymous" };
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=session");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=session");
     expect(store.updates).toEqual([]);
   });
 
   it("refuses a different Gmail account than the mailbox, stores nothing and revokes that grant", async () => {
     const g = google({ email: "someone.else@gmail.com" });
     const res = await callback(callbackReq("code=abc&state=nonce-1", cookieFor()));
-    expect(location(res).search).toBe("?gmail=wrong_account");
+    expect(location(res).search).toBe("?tab=gmail&gmail=wrong_account");
     expect(store.updates).toEqual([]);
     expect(g.revoked).toEqual(["RT-SECRET-1"]);
   });
 
   it("refuses when a permission was unticked, or Google gave no refresh token", async () => {
     let g = google({ scopes: ["https://www.googleapis.com/auth/gmail.compose"] });
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=scopes");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=scopes");
     expect(g.revoked).toEqual(["RT-SECRET-1"]);
     g = google({ refresh: null });
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=no_refresh_token");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=no_refresh_token");
     expect(store.updates).toEqual([]);
   });
 
   it("maps Google's answers to fixed codes: denied, error, no code, failed exchange", async () => {
     google({ tokenFails: true });
-    expect(location(await callback(callbackReq("error=access_denied&state=nonce-1", cookieFor()))).search).toBe("?gmail=denied");
-    expect(location(await callback(callbackReq("error=server_error&state=nonce-1", cookieFor()))).search).toBe("?gmail=google_error");
-    expect(location(await callback(callbackReq("state=nonce-1", cookieFor()))).search).toBe("?gmail=no_code");
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=token");
+    expect(location(await callback(callbackReq("error=access_denied&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=denied");
+    expect(location(await callback(callbackReq("error=server_error&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=google_error");
+    expect(location(await callback(callbackReq("state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=no_code");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=token");
     expect(store.updates).toEqual([]);
   });
 
   it("an unknown mailbox id in a valid cookie stores nothing", async () => {
     google();
     store.inbox = null;
-    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?gmail=no_inbox");
+    expect(location(await callback(callbackReq("code=abc&state=nonce-1", cookieFor()))).search).toBe("?tab=gmail&gmail=no_inbox");
     expect(store.updates).toEqual([]);
   });
 

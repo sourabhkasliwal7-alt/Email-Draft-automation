@@ -7,7 +7,7 @@ export default async function NewOfferPage() {
   await requireUser("offer.manage");
   return (
     <>
-      <BackLink href="/setup#offer">Setup</BackLink>
+      <BackLink href="/setup?tab=offers">Setup</BackLink>
       <PageHeader title="New offer" />
       <OfferForm />
     </>

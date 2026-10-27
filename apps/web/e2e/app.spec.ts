@@ -30,7 +30,7 @@ test("wrong password shows one generic error, correct password signs in", async 
 
 test("operator creates a campaign on one page, with clear validation and Apollo filters", async ({ page }) => {
   await loginAs(page, "operator");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=campaigns");
   await page.getByTestId("new-campaign").click();
   await expect(page).toHaveURL(/\/campaigns\/new$/);
 
@@ -60,7 +60,7 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   await page.getByLabel("Largest company (employees)").fill("5000");
   await page.getByRole("button", { name: "Create campaign" }).click();
 
-  await expect(page).toHaveURL(/\/setup#campaign$/);
+  await expect(page).toHaveURL(/\/setup\?tab=campaigns$/);
   const row = page.getByTestId("campaign-row").filter({ hasText: CAMPAIGN });
   await expect(row).toBeVisible();
   await expect(row).toContainText("CSV file + Apollo");
@@ -82,13 +82,13 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   await page.getByLabel("Leads come from").selectOption("csv");
   await expect(page.getByTestId("block-apollo")).toContainText("Not used");
   await page.getByRole("button", { name: "Save campaign" }).click();
-  await expect(page).toHaveURL(/\/setup#campaign$/);
+  await expect(page).toHaveURL(/\/setup\?tab=campaigns$/);
   await expect(page.getByTestId("campaign-row").filter({ hasText: CAMPAIGN })).toContainText("CSV file");
 });
 
 test("operator adds an offer and a case study with allowed numbers", async ({ page }) => {
   await loginAs(page, "operator");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=offers");
   await page.getByTestId("new-offer").click();
   await page.getByRole("button", { name: "Create offer" }).click();
   await expect(page.getByTestId("error-name")).toHaveText("Offer name is required");
@@ -161,7 +161,7 @@ test("admin can remove a suppression row and the removal is audited", async ({ p
 
 test("admin saves footer, models, prices and caps in Setup; every change is audited", async ({ page }) => {
   await loginAs(page, "admin");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=footer");
 
   // footer: required text is explained, a valid footer is saved without touching the other settings
   const footer = page.getByTestId("form-footer");
@@ -187,10 +187,11 @@ test("admin saves footer, models, prices and caps in Setup; every change is audi
   await models.getByRole("button", { name: "Save models" }).click();
   await expect(models.getByTestId("form-message")).toHaveText("Models saved.");
   await page.reload();
-  await page.locator("details#advanced > summary").click();
   await expect(page.getByTestId("form-models").getByLabel("Writing model")).toHaveValue(`e2e-model-${RUN}`);
   await expect(page.getByTestId("form-models").getByLabel("Quick-check model")).toHaveValue(screenModel);
+  await page.goto("/setup?tab=footer");
   await expect(page.getByTestId("form-footer").getByLabel("Opt-out line")).not.toHaveValue(""); // saving models did not clear the footer
+  await page.goto("/setup?tab=advanced");
   await page.getByTestId("form-models").getByLabel("Writing model").fill(original);
   await page.getByTestId("form-models").getByRole("button", { name: "Save models" }).click();
   await expect(page.getByTestId("form-models").getByTestId("form-message")).toHaveText("Models saved.");
@@ -214,7 +215,6 @@ test("admin saves footer, models, prices and caps in Setup; every change is audi
   await expect(page.getByTestId("error-usdPerUnit")).toHaveText("Price cannot be negative");
 
   await page.reload();
-  await page.locator("details#advanced > summary").click();
   await expect(page.getByTestId("audit-row").first()).toBeVisible();
   await expect(page.getByTestId("audit-row").filter({ hasText: "settings" }).first()).toBeVisible();
 });

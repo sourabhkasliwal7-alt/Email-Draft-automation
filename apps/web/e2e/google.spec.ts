@@ -13,13 +13,15 @@ test.afterAll(async () => {
 
 test("admin: Setup shows the exact redirect URI to register, the Testing-mode warning and a Connect Gmail button per mailbox", async ({ page }) => {
   await loginAs(page, "admin");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=gmail&add=1");
   await expect(page.getByTestId("section-mailboxes")).toBeVisible();
-  // the value to paste into Google Cloud: NEXT_PUBLIC_SITE_URL + /api/google/callback
+  // the value to paste into Google Cloud lives under "Technical details" (collapsed until opened)
+  await page.getByTestId("technical-details").locator("summary").click();
+  // NEXT_PUBLIC_SITE_URL + /api/google/callback
   await expect(page.getByTestId("google-redirect-uri")).toContainText("/api/google/callback");
   await expect(page.getByTestId("testing-warning")).toContainText("7 days");
 
-  await page.getByLabel("Email", { exact: true }).fill(EMAIL);
+  await page.getByLabel("Gmail address", { exact: true }).fill(EMAIL);
   await page.getByLabel("Display name").first().fill("E2E Gmail");
   await page.getByRole("button", { name: "Add mailbox" }).click();
   const row = page.getByTestId("inbox-row").filter({ hasText: EMAIL });
@@ -59,8 +61,8 @@ test("a forged or replayed Google callback is refused and stores nothing", async
   // the route answers with a redirect back to Setup (to NEXT_PUBLIC_SITE_URL, which is not this test server), so read it instead of following it
   const res = await page.request.get("/api/google/callback?code=forged&state=forged", { maxRedirects: 0 });
   expect([302, 307]).toContain(res.status());
-  expect(res.headers().location).toMatch(/\/setup\?gmail=state#mailboxes$/);
-  await page.goto("/setup?gmail=state");
+  expect(res.headers().location).toMatch(/\/setup\?tab=gmail&gmail=state$/);
+  await page.goto("/setup?tab=gmail&gmail=state");
   await expect(page.getByTestId("gmail-message")).toContainText("could not be verified");
   const { data } = await adminClient().from("inboxes").select("status, scopes").eq("email", EMAIL).single();
   expect(data).toEqual({ status: "disconnected", scopes: [] });
@@ -79,7 +81,8 @@ test("a mailbox Google no longer accepts shows 'Needs reconnect' with the reason
   await expect(row.locator("select[name=status]")).toHaveCount(0);
 
   await row.getByRole("button", { name: "Disconnect" }).click();
-  await expect(page).toHaveURL(/\/setup\?gmail=disconnected#mailboxes$/);
+  await page.getByTestId("confirm-yes").click(); // the confirmation dialog
+  await expect(page).toHaveURL(/\/setup\?tab=gmail/);
   await expect(page.getByTestId("gmail-message")).toContainText("Mailbox disconnected");
   const after = page.getByTestId("inbox-row").filter({ hasText: EMAIL });
   await expect(after).toContainText("Not connected");
@@ -107,7 +110,7 @@ test("a mailbox connected before the label permission shows Reconnect needed unt
   await page.reload();
   await expect(row.getByTestId("reconnect-needed")).toHaveCount(0);
   await expect(row.getByTestId("reconnect-needed-note")).toHaveCount(0);
-  await expect(row.getByTestId("expiry")).toContainText("stops working about");
+  await expect(row.getByTestId("expiry")).toContainText("Sign-in expires");
   await expect(row.locator("select[name=status]")).toHaveValue("active");
   await admin.from("inboxes").update({ status: "disconnected", scopes: [], connected_at: null }).eq("email", EMAIL);
 });
@@ -122,7 +125,7 @@ test("operators can look at mailboxes but cannot connect, disconnect or see the 
   await expect(page.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
   const res = await page.request.get("/api/google/connect?inbox=11111111-1111-4111-8111-111111111111", { maxRedirects: 0 });
   expect([302, 307]).toContain(res.status());
-  expect(res.headers().location).toMatch(/\/setup\?gmail=(forbidden|not_configured)#mailboxes$/);
+  expect(res.headers().location).toMatch(/\/setup\?tab=gmail&gmail=(forbidden|not_configured)$/);
 });
 
 test("Setup > Advanced > Connections lists Claude (with its provider and models), Serper and ZeroBounce with their key status, and never prints a key", async ({ page }) => {

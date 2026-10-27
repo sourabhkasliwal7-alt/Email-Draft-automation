@@ -1,6 +1,9 @@
+import { LogOut } from "lucide-react";
 import { can, type Permission } from "@outreach/core";
+import { AppShell } from "@/components/app-shell";
 import { HealthBadge } from "@/components/health-badge";
-import { Nav, type NavItem } from "@/components/nav";
+import { HelpSheet } from "@/components/help-sheet";
+import type { NavItem } from "@/components/nav";
 import { requireUser } from "@/lib/auth";
 
 const NAV: (NavItem & { permission: Permission })[] = [
@@ -10,30 +13,55 @@ const NAV: (NavItem & { permission: Permission })[] = [
   { href: "/setup", label: "Setup", permission: "setup.view" },
 ];
 
+/** The app's mark: an envelope in the brand colour. */
+function Mark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <rect x="1.5" y="5" width="29" height="22" rx="6" fill="var(--brand)" />
+      <path d="M5.5 10.5 16 18l10.5-7.5" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser("dashboard.view");
   const items = NAV.filter((n) => can(user.role, n.permission)).map(({ href, label }) => ({ href, label }));
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col gap-6 border-r bg-zinc-50 p-4 dark:bg-zinc-950">
-        <div className="text-lg font-semibold tracking-tight">Outreach Engine</div>
-        <Nav items={items} />
-        <div className="mt-auto space-y-3 text-xs text-zinc-600 dark:text-zinc-400">
-          <HealthBadge />
-          <div>
-            <div data-testid="user-email" className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+    <AppShell
+      items={items}
+      logo={
+        <div className="flex items-center gap-2.5">
+          <Mark className="size-8 shrink-0" />
+          <span className="font-heading text-xl leading-none font-semibold tracking-tight">Outreach Engine</span>
+        </div>
+      }
+      footer={
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <HealthBadge />
+            <HelpSheet />
+          </div>
+          <div className="rounded-xl border bg-card p-3">
+            <div data-testid="user-email" className="truncate text-sm font-medium text-foreground" title={user.email}>
               {user.email}
             </div>
-            <div data-testid="user-role">{user.role}</div>
+            <div data-testid="user-role" className="text-xs text-muted-foreground capitalize">
+              {user.role}
+            </div>
+            <form action="/auth/signout" method="post" className="mt-3">
+              <button
+                type="submit"
+                className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-input bg-card px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
+              >
+                <LogOut className="size-4" aria-hidden />
+                Sign out
+              </button>
+            </form>
           </div>
-          <form action="/auth/signout" method="post">
-            <button type="submit" className="rounded-md border px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100">
-              Sign out
-            </button>
-          </form>
-        </div>
-      </aside>
-      <main className="min-w-0 flex-1 p-8">{children}</main>
-    </div>
+        </>
+      }
+    >
+      {children}
+    </AppShell>
   );
 }

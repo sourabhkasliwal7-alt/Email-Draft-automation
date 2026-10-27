@@ -51,7 +51,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   };
   return (
     <>
-      <BackLink href="/setup#campaign">Setup</BackLink>
+      <BackLink href="/setup?tab=campaigns">Setup</BackLink>
       <PageHeader title={`Edit: ${c.name}`} />
       <CampaignForm
         defaults={defaults}

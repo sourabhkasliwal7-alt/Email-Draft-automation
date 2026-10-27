@@ -1,72 +1,89 @@
+import { Plus } from "lucide-react";
 import { can } from "@outreach/core";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { Section } from "@/components/bits";
+import { LinkButton } from "@/components/link-button";
 import { PageHeader } from "@/components/page-header";
 import { isTestActive, latestAdapterTests } from "@/lib/adapter-tests";
 import { requireUser } from "@/lib/auth";
+import { SETUP_INSTRUCTIONS, parseSetupTab, setupTabMarks } from "@/lib/setup-tabs";
 import { createClient } from "@/lib/supabase/server";
 import { loadWorkflowSettings } from "@/lib/workflow-settings";
-import { AdvancedSection } from "./advanced";
-import { ApolloSection } from "./apollo";
-import { CampaignSection, OfferSection } from "./campaigns-offers";
+import { AdvancedTab } from "./advanced";
+import { ApolloTab, apolloState } from "./apollo";
+import { CampaignsTab, OffersTab, loadCampaignOfferFacts } from "./campaigns-offers";
 import { FooterForm, ScheduleForm } from "./forms";
-import { MailboxesSection } from "./mailboxes";
+import { GmailTab, loadGmailFacts } from "./mailboxes";
+import { SetupTabs } from "./tabs";
 
-const CONTENTS = [
-  ["mailboxes", "Gmail mailboxes"],
-  ["apollo", "Apollo account"],
-  ["campaign", "Campaign"],
-  ["offer", "Offer and case study"],
-  ["footer", "Email footer"],
-  ["schedule", "Schedule"],
-  ["advanced", "Advanced"],
-] as const;
-
-export default async function SetupPage({ searchParams }: { searchParams: Promise<{ gmail?: string }> }) {
+export default async function SetupPage({ searchParams }: { searchParams: Promise<{ tab?: string; gmail?: string; add?: string }> }) {
   const user = await requireUser("setup.view");
-  const { gmail } = await searchParams;
+  const { tab: tabParam, gmail, add } = await searchParams;
+  const tab = parseSetupTab(tabParam);
   const supabase = await createClient();
   const workflow = await loadWorkflowSettings(supabase);
   const admin = can(user.role, "settings.manage");
   const tests = admin ? await latestAdapterTests() : {};
+  const [gmailFacts, counts] = await Promise.all([loadGmailFacts(), loadCampaignOfferFacts()]);
+
+  const marks = setupTabMarks({
+    gmailReady: gmailFacts.gmailReady,
+    apolloLive: apolloState().live,
+    campaigns: counts.campaigns,
+    offers: counts.offers,
+    footerSet: Boolean(workflow.postal_address.trim() && workflow.optout_line.trim()),
+    scheduleOn: workflow.schedule_enabled,
+  });
+
+  // the one main button of the page, on the right of the sticky header
+  const actions =
+    tab === "gmail" && can(user.role, "inbox.manage") ? (
+      <LinkButton href="/setup?tab=gmail&add=1" icon={<Plus aria-hidden />} data-testid="add-mailbox">
+        Add mailbox
+      </LinkButton>
+    ) : tab === "campaigns" && can(user.role, "campaign.manage") ? (
+      <LinkButton href="/campaigns/new" icon={<Plus aria-hidden />} data-testid="new-campaign">
+        New campaign
+      </LinkButton>
+    ) : tab === "offers" && can(user.role, "offer.manage") ? (
+      <LinkButton href="/offers/new" icon={<Plus aria-hidden />} data-testid="new-offer">
+        New offer
+      </LinkButton>
+    ) : undefined;
 
   return (
     <>
-      <PageHeader title="Setup" description="Everything you set once, in one place. Work down the list: Gmail, Apollo (optional), campaign, offer, footer." />
+      <PageHeader title="Setup" description={SETUP_INSTRUCTIONS[tab]} actions={actions} />
       <AutoRefresh active={Object.values(tests).some(isTestActive)} />
-      <nav aria-label="On this page" className="mb-6 flex flex-wrap gap-2 text-sm" data-testid="setup-contents">
-        {CONTENTS.map(([id, label]) => (
-          <a key={id} href={`#${id}`} className="rounded-full border px-3 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-            {label}
-          </a>
-        ))}
-      </nav>
+      <div className="space-y-6">
+        <SetupTabs active={tab} marks={marks} />
 
-      <div className="space-y-10">
-        <MailboxesSection role={user.role} gmail={gmail} />
-        <ApolloSection role={user.role} />
-        <CampaignSection role={user.role} />
-        <OfferSection role={user.role} />
-
-        <Section id="footer" title="Email footer" description="Added to the bottom of every email: where you are and how to opt out.">
-          {admin ? (
-            <FooterForm values={{ postal_address: workflow.postal_address, optout_line: workflow.optout_line, white_label_line: workflow.white_label_line }} />
-          ) : (
-            <p className="text-sm text-zinc-600" data-testid="footer-readonly">{workflow.postal_address.trim() ? "The footer is set." : "The footer is not set yet."} An admin can change it.</p>
-          )}
-        </Section>
-
-        <Section id="schedule" title="Schedule" description="Let a run start by itself, or press Start run on Home whenever you want.">
-          {admin ? (
-            <ScheduleForm values={{ schedule_enabled: workflow.schedule_enabled, run_time_ist: workflow.run_time_ist }} />
-          ) : (
-            <p className="text-sm text-zinc-600" data-testid="schedule-readonly">
-              Automatic runs are {workflow.schedule_enabled ? `on, every weekday at ${workflow.run_time_ist} (India time)` : "off"}. An admin can change this.
-            </p>
-          )}
-        </Section>
-
-        <AdvancedSection role={user.role} workflow={workflow} />
+        {tab === "gmail" && <GmailTab role={user.role} gmail={gmail} adding={add === "1"} />}
+        {tab === "apollo" && <ApolloTab role={user.role} />}
+        {tab === "campaigns" && <CampaignsTab role={user.role} />}
+        {tab === "offers" && <OffersTab role={user.role} />}
+        {tab === "footer" && (
+          <div id="footer" data-testid="section-footer">
+            {admin ? (
+              <FooterForm values={{ postal_address: workflow.postal_address, optout_line: workflow.optout_line, white_label_line: workflow.white_label_line }} />
+            ) : (
+              <p className="text-sm text-muted-foreground" data-testid="footer-readonly">
+                {workflow.postal_address.trim() ? "The footer is set." : "The footer is not set yet."} An admin can change it.
+              </p>
+            )}
+          </div>
+        )}
+        {tab === "schedule" && (
+          <div id="schedule" data-testid="section-schedule">
+            {admin ? (
+              <ScheduleForm values={{ schedule_enabled: workflow.schedule_enabled, run_time_ist: workflow.run_time_ist }} />
+            ) : (
+              <p className="text-sm text-muted-foreground" data-testid="schedule-readonly">
+                Automatic runs are {workflow.schedule_enabled ? `on, every weekday at ${workflow.run_time_ist} (India time)` : "off"}. An admin can change this.
+              </p>
+            )}
+          </div>
+        )}
+        {tab === "advanced" && <AdvancedTab role={user.role} workflow={workflow} />}
       </div>
     </>
   );

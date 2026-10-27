@@ -191,12 +191,8 @@ test("Home: the button says Start run or Start test run (no drafts), and the con
   await page.goto("/");
   const form = page.getByTestId("start-run-form");
   await expect(form).toBeVisible();
-  const test = form.getByLabel("Test run (no drafts, no credits)");
-  const dialogs: string[] = [];
-  page.on("dialog", (d) => {
-    dialogs.push(d.message());
-    void d.dismiss(); // never start anything from a test
-  });
+  const test = form.locator("input[type=checkbox][name=dryRun]");
+  const dialog = page.getByTestId("confirm-dialog");
   if (forced) {
     await expect(test).toBeChecked();
     await expect(test).toBeDisabled();
@@ -205,15 +201,17 @@ test("Home: the button says Start run or Start test run (no drafts), and the con
     await expect(test).not.toBeChecked();
     await expect(form.getByRole("button", { name: "Start run", exact: true })).toBeVisible();
     await form.getByRole("button", { name: "Start run", exact: true }).click();
-    await expect.poll(() => dialogs.length).toBe(1);
-    expect(dialogs[0]).toContain("REAL RUN");
-    expect(dialogs[0]).toContain("nothing is ever sent");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("Real run");
+    await expect(dialog).toContainText("Nothing is ever sent");
+    await page.getByTestId("confirm-cancel").click(); // never start anything from a test
     await test.check();
     await expect(form.getByRole("button", { name: "Start test run (no drafts)", exact: true })).toBeVisible();
     await expect(form.getByRole("button", { name: "Start run", exact: true })).toHaveCount(0);
     await form.getByRole("button", { name: "Start test run (no drafts)", exact: true }).click();
-    await expect.poll(() => dialogs.length).toBe(2);
-    expect(dialogs[1]).toContain("TEST RUN");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("Test run");
+    await page.getByTestId("confirm-cancel").click();
     await test.uncheck();
     await expect(form.getByRole("button", { name: "Start run", exact: true })).toBeVisible();
   }
@@ -277,7 +275,7 @@ test("Leads: two clear ways to add leads, an Apollo search with its result, and 
 
   // pressing the button queues the search (a job for this campaign); the test cancels it so nothing runs
   await page.locator("#apolloCampaignId").selectOption({ label: APOLLO_CAMPAIGN });
-  await page.getByRole("button", { name: "Find leads now (free search)" }).click();
+  await page.getByRole("button", { name: "Preview Apollo leads (optional)" }).click();
   await expect(page.getByTestId("form-message").last()).toContainText("Search started");
   const admin = adminClient();
   const { data: queued } = await admin.from("jobs").select("id, status, payload").eq("type", "apollo.find").eq("campaign_id", ids.apollo).in("status", ["pending", "running"]);
@@ -366,6 +364,7 @@ test("Drafts: Retry puts the lead back at the step that failed and carries on in
   const skip = page.getByTestId("attention-row").filter({ hasText: `SkipMe ${E}` });
   await expect(skip.getByTestId("attention-detail")).toContainText("Getting and checking the email address");
   await skip.getByRole("button", { name: "Skip" }).click();
+  await page.getByTestId("confirm-yes").click(); // the confirmation dialog
   await expect(page.getByTestId("attention-row").filter({ hasText: `SkipMe ${E}` })).toHaveCount(0);
   const { data: skipped } = await admin.from("campaign_leads").select("status, reason_codes").eq("id", leads.SkipMe!).single();
   expect(skipped).toMatchObject({ status: "disqualified", reason_codes: ["manual"] });
@@ -383,13 +382,13 @@ test("Home: a run in progress is shown in plain words with its step, and can be 
 
 test("Setup shows the Apollo account section for an admin: key status, demo or live, and a test button", async ({ page }) => {
   await loginAs(page, "admin");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=apollo");
   const section = page.getByTestId("section-apollo");
   await expect(section).toBeVisible();
   const keySet = Boolean(process.env.APOLLO_API_KEY?.trim());
   await expect(page.getByTestId("apollo-key-status")).toContainText(keySet ? "Apollo key: set" : "Apollo key: not set");
   const live = keySet && process.env.ADAPTER_APOLLO?.trim().toLowerCase() === "live";
-  await expect(page.getByTestId("apollo-mode")).toContainText(live ? "Live" : "Demo");
+  await expect(page.getByTestId("apollo-mode")).toContainText(live ? "Live" : "Practice mode");
   if (!live) await expect(page.getByTestId("apollo-how-to")).toContainText("APOLLO_API_KEY");
   await expect(page.getByTestId("test-apollo")).toBeVisible();
   const text = await section.innerText();
@@ -410,18 +409,21 @@ test("Setup shows the Apollo account section for an admin: key status, demo or l
   await expect(details).toContainText("Getting email addresses: not allowed. Your Apollo plan does not allow unlocking emails");
 });
 
-test("Setup is one page with its sections in order and a short list of contents", async ({ page }) => {
+test("Setup is one page with seven numbered tabs, one section visible at a time", async ({ page }) => {
   await loginAs(page, "admin");
   await page.goto("/setup");
-  const contents = await page.getByTestId("setup-contents").getByRole("link").allInnerTexts();
-  expect(contents).toEqual(["Gmail mailboxes", "Apollo account", "Campaign", "Offer and case study", "Email footer", "Schedule", "Advanced"]);
-  for (const id of ["mailboxes", "apollo", "campaign", "offer", "footer", "schedule", "advanced"]) await expect(page.locator(`#${id}`)).toHaveCount(1);
-  const advanced = page.locator("details#advanced");
-  await expect(advanced).toHaveJSProperty("open", false); // collapsed until asked for
+  const tabs = await page.getByTestId("setup-tabs").getByRole("link").allInnerTexts();
+  expect(tabs.map((t) => t.replace(/\s+/g, " ").replace(/complete|needs action/g, "").trim())).toEqual(["1 Gmail", "2 Apollo", "3 Campaigns", "4 Offers", "5 Email footer", "6 Schedule", "7 Advanced"]);
+  const ids: Record<string, string> = { gmail: "mailboxes", apollo: "apollo", campaigns: "campaign", offers: "offer", footer: "footer", schedule: "schedule", advanced: "advanced" };
+  for (const [tab, id] of Object.entries(ids)) {
+    await page.goto(`/setup?tab=${tab}`);
+    await expect(page.locator(`#${id}`)).toHaveCount(1);
+  }
+  await page.goto("/setup?tab=gmail");
   // the technical words live inside Advanced only
   const outside = await page.locator("main").evaluate((main) => {
     const clone = main.cloneNode(true) as HTMLElement;
-    clone.querySelector("details#advanced")?.remove();
+    clone.querySelector("[data-testid=technical-details]")?.remove();
     clone.querySelector("[data-testid=google-redirect-uri]")?.remove();
     clone.querySelector("[data-testid=google-not-configured]")?.remove();
     clone.querySelector("[data-testid=testing-warning]")?.remove();

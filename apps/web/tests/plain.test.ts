@@ -61,10 +61,10 @@ describe("Getting started checklist", () => {
   const none = { gmailConnected: false, offers: 0, footerSet: false, campaigns: 0, leads: 0, realRuns: 0 };
   it("lists the six steps in the order a new person does them", () => {
     const steps = buildChecklist(none);
-    expect(steps.map((s) => s.label)).toEqual(["Connect Gmail", "Add an offer", "Set the email footer", "Create a campaign", "Add leads (CSV or Apollo)", "Start your first run"]);
+    expect(steps.map((s) => s.label)).toEqual(["Connect Gmail", "Add your offer", "Fill in the email footer", "Create a campaign", "Add leads (CSV or Apollo)", "Start your first run"]);
     expect(steps.every((s) => !s.done)).toBe(true);
     expect(setupComplete(steps)).toBe(false);
-    expect(steps.map((s) => s.href)).toEqual(["/setup#mailboxes", "/setup#offer", "/setup#footer", "/setup#campaign", "/leads", "#start"]);
+    expect(steps.map((s) => s.href)).toEqual(["/setup?tab=gmail", "/setup?tab=offers", "/setup?tab=footer", "/setup?tab=campaigns", "/leads", "#start"]);
   });
   it("ticks each step from the data and is complete only when every step is", () => {
     expect(buildChecklist({ ...none, gmailConnected: true, offers: 2 }).filter((s) => s.done).map((s) => s.key)).toEqual(["gmail", "offer"]);

@@ -20,7 +20,7 @@ export async function saveCampaign(_prev: ActionState, formData: FormData): Prom
   if (error) return { ok: false, message: dbErrorMessage(error) };
 
   revalidatePath("/setup");
-  redirect("/setup#campaign");
+  redirect("/setup?tab=campaigns");
 }
 
 /** Soft delete: the campaign disappears from lists but all of its history stays. */

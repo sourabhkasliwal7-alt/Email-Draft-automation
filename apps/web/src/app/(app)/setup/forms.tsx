@@ -10,9 +10,9 @@ type SaveAction = (prev: ActionState, formData: FormData) => Promise<ActionState
 function SettingsCard({ testId, title, hint, action, button, children }: { testId: string; title?: string; hint?: string; action: SaveAction; button: string; children: (err: Record<string, string>) => React.ReactNode }) {
   const { state, onSubmit, pending } = useActionForm(action);
   return (
-    <form onSubmit={onSubmit} noValidate data-testid={testId} className="max-w-2xl space-y-3 rounded-lg border p-4">
+    <form onSubmit={onSubmit} noValidate data-testid={testId} className="max-w-3xl space-y-4 rounded-2xl border bg-card p-5 shadow-card">
       {title && <h3 className="font-medium">{title}</h3>}
-      {hint && <p className="text-xs text-zinc-500">{hint}</p>}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children(state.fieldErrors ?? {})}
       <FormMessage state={state} />
       <SubmitButton pending={pending}>{button}</SubmitButton>
@@ -164,7 +164,7 @@ export function PriceForm() {
   return (
     <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
       <h3 className="font-medium">Add a price</h3>
-      <p className="text-xs text-zinc-500">Costs are computed from recorded usage x these prices. A new row applies from now on.</p>
+      <p className="text-xs text-muted-foreground">Costs are computed from recorded usage x these prices. A new row applies from now on.</p>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Provider" name="provider" error={err.provider}>
           <TextInput name="provider" placeholder="anthropic" />
@@ -188,7 +188,7 @@ export function SpendCapForm({ campaigns }: { campaigns: { id: string; name: str
   return (
     <form onSubmit={action} className="space-y-3 rounded-lg border p-4" noValidate>
       <h3 className="font-medium">Add a spend cap</h3>
-      <p className="text-xs text-zinc-500">No paid call is made once a cap that applies to it would be exceeded.</p>
+      <p className="text-xs text-muted-foreground">No paid call is made once a cap that applies to it would be exceeded.</p>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Scope" name="scope" error={err.scope}>
           <SelectInput name="scope" defaultValue="global" options={[{ value: "global", label: "Global" }, { value: "provider", label: "Provider" }, { value: "campaign", label: "Campaign" }]} />

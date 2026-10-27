@@ -42,11 +42,11 @@ test("the old addresses lead to their new place", async ({ page }) => {
   const WHERE: [string, RegExp][] = [
     ["/runs", /\/$/],
     ["/attention", /\/drafts\?tab=attention$/],
-    ["/inboxes", /\/setup#mailboxes$/],
-    ["/settings", /\/setup#advanced$/],
-    ["/offers", /\/setup#offer$/],
-    ["/campaigns", /\/setup#campaign$/],
-    ["/suppression", /\/setup#advanced$/],
+    ["/inboxes", /\/setup\?tab=gmail$/],
+    ["/settings", /\/setup\?tab=advanced$/],
+    ["/offers", /\/setup\?tab=offers$/],
+    ["/campaigns", /\/setup\?tab=campaigns$/],
+    ["/suppression", /\/setup\?tab=advanced$/],
     ["/import", /\/leads$/],
   ];
   for (const [from, to] of WHERE) {
@@ -87,14 +87,16 @@ test("operator sees Home with a Start run form (no send controls); admin gets cl
   await page.goto("/drafts?tab=attention");
   await expect(page.getByTestId("tab-attention")).toBeVisible();
   // an operator opens Setup, but the technical settings are the admin's
-  await page.goto("/setup");
+  await page.goto("/setup?tab=campaigns");
   await expect(page.getByTestId("section-campaign")).toBeVisible();
+  await page.goto("/setup?tab=schedule");
   await expect(page.getByTestId("form-schedule")).toHaveCount(0);
+  await page.goto("/setup?tab=footer");
   await expect(page.getByTestId("form-footer")).toHaveCount(0);
   await page.context().clearCookies();
 
   await loginAs(page, "admin");
-  await page.goto("/setup");
+  await page.goto("/setup?tab=schedule");
   const form = page.getByTestId("form-schedule");
   await expect(form).toBeVisible();
   await form.getByLabel("Start time (India time, 24-hour)").fill("25:99");

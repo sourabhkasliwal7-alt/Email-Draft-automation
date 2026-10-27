@@ -13,7 +13,7 @@ export default async function NewCampaignPage() {
   ]);
   return (
     <>
-      <BackLink href="/setup#campaign">Setup</BackLink>
+      <BackLink href="/setup?tab=campaigns">Setup</BackLink>
       <PageHeader title="New campaign" description="Who to write to, where the leads come from and where the drafts go." />
       <CampaignForm
         defaults={NEW_CAMPAIGN}

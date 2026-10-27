@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
  */
 export async function GET(request: NextRequest) {
   const cfg = googleConfig();
-  const back = (code: string) => NextResponse.redirect(new URL(`/setup?gmail=${code}#mailboxes`, cfg.siteUrl ?? request.url));
+  const back = (code: string) => NextResponse.redirect(new URL(`/setup?tab=gmail&gmail=${code}`, cfg.siteUrl ?? request.url));
   if (!cfg.ok) return back("not_configured");
 
   const guard = evaluateGuard(await getSession(), "inbox.manage");

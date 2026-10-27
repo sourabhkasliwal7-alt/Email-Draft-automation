@@ -23,7 +23,7 @@ export default async function OfferPage({ params, searchParams }: { params: Prom
 
   return (
     <>
-      <BackLink href="/setup#offer">Setup</BackLink>
+      <BackLink href="/setup?tab=offers">Setup</BackLink>
       <PageHeader title={offer.name} description={manage ? "Edit the offer and its case studies." : "Read-only view."} />
       {manage ? (
         <OfferForm offer={offer} />

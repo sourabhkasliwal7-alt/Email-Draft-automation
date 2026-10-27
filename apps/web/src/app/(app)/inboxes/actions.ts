@@ -74,7 +74,7 @@ export async function disconnectInbox(formData: FormData): Promise<void> {
   }
   await db.from("inboxes").update({ encrypted_refresh_token: null, scopes: [], status: "disconnected", connected_at: null, last_error: null }).eq("id", id);
   revalidatePath("/setup");
-  redirect("/setup?gmail=disconnected#mailboxes");
+  redirect("/setup?tab=gmail&gmail=disconnected");
 }
 
 /** Queues one Gmail draft addressed to the mailbox itself, so the connection can be checked without touching any lead. Nothing is sent. */

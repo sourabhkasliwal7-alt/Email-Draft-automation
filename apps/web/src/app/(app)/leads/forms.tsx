@@ -17,7 +17,7 @@ export function FindApolloForm({ campaigns }: { campaigns: { id: string; name: s
         </select>
       </Field>
       <FormMessage state={state} />
-      <SubmitButton pending={pending}>Find leads now (free search)</SubmitButton>
+      <SubmitButton variant="outline" pending={pending}>Preview Apollo leads (optional)</SubmitButton>
     </form>
   );
 }

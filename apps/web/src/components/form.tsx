@@ -1,34 +1,43 @@
 "use client";
 
-import { startTransition, useActionState } from "react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { startTransition, useActionState, useEffect } from "react";
+import { HelpTip } from "@/components/help-tip";
+import { useToast } from "@/components/toast";
 import { Button } from "@/components/ui/button";
 import type { ActionState } from "@/lib/auth";
 
 export const inputClass =
-  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:border-zinc-300";
+  "w-full rounded-lg border border-input bg-card px-3.5 py-2.5 text-sm text-foreground shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-zinc-400 hover:border-zinc-400 focus:border-brand focus:ring-3 focus:ring-ring/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 
+/** A labelled field. `help` adds a (?) with a plain explanation next to the label. */
 export function Field({
   label,
   name,
   error,
   hint,
+  help,
   children,
 }: {
   label: string;
   name: string;
   error?: string;
   hint?: string;
+  help?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1" data-field={name}>
-      <label htmlFor={name} className="block text-sm font-medium">
-        {label}
-      </label>
+    <div className="space-y-1.5" data-field={name}>
+      <div className="flex items-center gap-1.5">
+        <label htmlFor={name} className="block text-sm font-medium text-foreground">
+          {label}
+        </label>
+        {help && <HelpTip label={label}>{help}</HelpTip>}
+      </div>
       {children}
-      {hint && !error && <p className="text-xs text-zinc-500">{hint}</p>}
+      {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
       {error && (
-        <p role="alert" data-testid={`error-${name}`} className="text-xs font-medium text-red-600">
+        <p role="alert" data-testid={`error-${name}`} className="text-xs font-medium text-red-700">
           {error}
         </p>
       )}
@@ -49,17 +58,7 @@ export function TextInput({
   placeholder?: string;
   autoComplete?: string;
 }) {
-  return (
-    <input
-      id={name}
-      name={name}
-      type={type}
-      defaultValue={defaultValue ?? ""}
-      placeholder={placeholder}
-      autoComplete={autoComplete}
-      className={inputClass}
-    />
-  );
+  return <input id={name} name={name} type={type} defaultValue={defaultValue ?? ""} placeholder={placeholder} autoComplete={autoComplete} className={inputClass} />;
 }
 
 export function TextArea({ name, defaultValue, rows = 3, placeholder }: { name: string; defaultValue?: string | null; rows?: number; placeholder?: string }) {
@@ -76,7 +75,7 @@ export function SelectInput({
   options: { value: string; label: string }[];
 }) {
   return (
-    <select id={name} name={name} defaultValue={defaultValue ?? ""} className={inputClass}>
+    <select id={name} name={name} defaultValue={defaultValue ?? ""} className={`${inputClass} pr-9`}>
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
@@ -86,27 +85,55 @@ export function SelectInput({
   );
 }
 
-export function Checkbox({ name, label, defaultChecked, value, disabled }: { name: string; label: string; defaultChecked?: boolean; value?: string; disabled?: boolean }) {
+export function Checkbox({
+  name,
+  label,
+  defaultChecked,
+  value,
+  disabled,
+  help,
+  description,
+}: {
+  name: string;
+  label: string;
+  defaultChecked?: boolean;
+  value?: string;
+  disabled?: boolean;
+  help?: React.ReactNode;
+  /** one line under the label that says what ticking it does */
+  description?: string;
+}) {
   return (
-    <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" name={name} value={value} defaultChecked={defaultChecked} disabled={disabled} className="size-4 rounded border-zinc-300" />
-      {label}
-    </label>
+    <div className="flex items-start gap-2.5">
+      <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+        <input type="checkbox" name={name} value={value} defaultChecked={defaultChecked} disabled={disabled} className="mt-0.5 size-[1.1rem] shrink-0 rounded border-input accent-[var(--brand)] disabled:cursor-not-allowed" />
+        <span>
+          <span className="font-medium text-foreground">{label}</span>
+          {description && <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>}
+        </span>
+      </label>
+      {help && <HelpTip label={label}>{help}</HelpTip>}
+    </div>
   );
 }
 
+/** The submit button of a form: Primary by default, with a spinner while the form is working. */
 export function SubmitButton({
   children,
   pending = false,
   variant = "default",
+  icon,
+  size,
 }: {
   children: React.ReactNode;
   pending?: boolean;
   variant?: "default" | "outline" | "destructive";
+  icon?: React.ReactNode;
+  size?: "default" | "sm" | "lg";
 }) {
   return (
-    <Button type="submit" variant={variant} disabled={pending}>
-      {pending ? "Working…" : children}
+    <Button type="submit" variant={variant} size={size} icon={icon} pending={pending}>
+      {children}
     </Button>
   );
 }
@@ -114,10 +141,16 @@ export function SubmitButton({
 /**
  * Wraps a server action for a form. Submits through onSubmit + a transition instead of the form `action` prop,
  * because React 19 resets every uncontrolled field after an action completes, which would erase what the user
- * typed whenever the server returns a validation error.
+ * typed whenever the server returns a validation error. Every answer from the server also appears as a toast.
  */
 export function useActionForm(serverAction: (prev: ActionState, formData: FormData) => Promise<ActionState>) {
   const [state, dispatch, pending] = useActionState(serverAction, {} as ActionState);
+  const toast = useToast();
+  useEffect(() => {
+    if (!state.message) return;
+    if (state.ok) toast.success(state.message);
+    else toast.error(state.message);
+  }, [state, toast]);
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -128,15 +161,15 @@ export function useActionForm(serverAction: (prev: ActionState, formData: FormDa
 
 export function FormMessage({ state }: { state: ActionState }) {
   if (!state.message) return null;
+  const Icon = state.ok ? CheckCircle2 : AlertCircle;
   return (
     <p
       role={state.ok ? "status" : "alert"}
       data-testid="form-message"
-      className={`rounded-md border px-3 py-2 text-sm ${
-        state.ok ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-red-300 bg-red-50 text-red-900"
-      }`}
+      className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-sm ${state.ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-800"}`}
     >
-      {state.message}
+      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <span>{state.message}</span>
     </p>
   );
 }

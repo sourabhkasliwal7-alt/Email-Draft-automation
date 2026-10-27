@@ -11,10 +11,10 @@ import { writingRulesToForm } from "./schemas";
 import { SuppressionBlock } from "./suppression-block";
 
 /**
- * Setup > Advanced (collapsed). The technical settings live here: models, credit limits, the price table, spend caps,
+ * Setup > Advanced. The technical settings live here: models, credit limits, the price table, spend caps,
  * connection tests, the suppression list and the audit log. Internal words are allowed here and only here.
  */
-export async function AdvancedSection({ role, workflow: wf }: { role: Role; workflow: WorkflowConfig }) {
+export async function AdvancedTab({ role, workflow: wf }: { role: Role; workflow: WorkflowConfig }) {
   const admin = can(role, "settings.manage");
   const workflow = parseWorkflowConfig(wf);
   const supabase = await createClient();
@@ -22,13 +22,10 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
 
   if (!admin) {
     return (
-      <details id="advanced" data-testid="section-advanced" className="scroll-mt-6 rounded-lg border p-4">
-        <summary className="cursor-pointer text-lg font-semibold">Advanced</summary>
-        <div className="mt-4 space-y-6">
-          <p className="text-sm text-zinc-500">The technical settings are for an admin. You can add people to the do-not-contact list here.</p>
-          <SuppressionBlock role={role} />
-        </div>
-      </details>
+      <div id="advanced" data-testid="section-advanced" className="space-y-6">
+        <p className="text-sm text-muted-foreground">The technical settings are for an admin. You can add people to the do-not-contact list here.</p>
+        <SuppressionBlock role={role} />
+      </div>
     );
   }
 
@@ -70,18 +67,17 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
   ]);
 
   return (
-    <details id="advanced" data-testid="section-advanced" className="scroll-mt-6 rounded-lg border p-4">
-      <summary className="cursor-pointer text-lg font-semibold">Advanced</summary>
-      <div className="mt-4 space-y-8">
-        <p className="text-sm text-zinc-600">Technical settings. The defaults work; change them only if you know why. Every change is written to the audit log.</p>
+    <div id="advanced" data-testid="section-advanced">
+      <div className="space-y-8">
+        <p className="text-sm text-muted-foreground">Every change here is written to the audit log.</p>
         <RunRulesForm values={{ approve_threshold: workflow.approve_threshold, same_company_cooldown_days: workflow.same_company_cooldown_days, run_limit_minutes: workflow.run_limit_minutes, dry_run: workflow.dry_run, allow_risky: workflow.allow_risky, skip_verification: workflow.skip_verification }} />
         <CreditsForm values={{ daily_reveal_cap: workflow.daily_reveal_cap, monthly_credit_cap: workflow.monthly_credit_cap }} />
         <ModelsForm values={{ model_screen: workflow.model_screen, model_extract: workflow.model_extract, model_write: workflow.model_write }} />
         <WritingRulesForm values={writingRulesToForm(workflow)} />
 
-<section className="space-y-3" data-testid="connections">
+        <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-card" data-testid="connections">
           <h2 className="text-lg font-semibold">Connections</h2>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-muted-foreground">
             Keys live in .env, never here. &quot;Test connection&quot; makes one tiny real call (priced from the price table, checked against the spend caps, usage recorded). It works while an adapter is still on mock and never switches it to live: that is ADAPTER_* in .env.
           </p>
           <ul className="space-y-3">
@@ -90,11 +86,11 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="font-medium">{c.name}</p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-muted-foreground">
                       {c.keyVar}: {c.configured ? "set" : "NOT set"} · {c.adapter}: {c.mode} · price rows needed (provider / unit): {c.units}
                     </p>
                     {c.id === "anthropic" && (
-                      <div className="mt-2 space-y-1 text-xs text-zinc-600" data-testid="llm-details">
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground" data-testid="llm-details">
                         {llmProblem ? (
                           <p className="font-medium text-red-700">{llmProblem}</p>
                         ) : (
@@ -141,14 +137,14 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
           </ul>
         </section>
 
-<section className="space-y-3">
+        <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-card">
           <h2 className="text-lg font-semibold">Price table</h2>
           <PriceForm />
           {!prices?.length ? (
             <EmptyState>No prices yet. Add one for every provider/unit before enabling live adapters.</EmptyState>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-zinc-500">
+              <thead className="text-left text-xs uppercase text-muted-foreground">
                 <tr><th className="py-2">Provider</th><th>Unit</th><th>USD / unit</th><th>Effective from (IST)</th></tr>
               </thead>
               <tbody>
@@ -165,7 +161,7 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
           )}
         </section>
 
-<section className="space-y-3">
+        <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-card">
           <h2 className="text-lg font-semibold">Spend caps</h2>
           <SpendCapForm campaigns={campaigns ?? []} />
           {!caps?.length ? (
@@ -189,13 +185,13 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
 
         <SuppressionBlock role={role} />
 
-<section className="space-y-3">
+        <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-card">
           <h2 className="text-lg font-semibold">Recent audit log</h2>
           {!audit?.length ? (
             <EmptyState>No entries yet.</EmptyState>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-zinc-500">
+              <thead className="text-left text-xs uppercase text-muted-foreground">
                 <tr><th className="py-2">When (IST)</th><th>Action</th><th>Entity</th><th>Actor</th></tr>
               </thead>
               <tbody>
@@ -212,6 +208,6 @@ export async function AdvancedSection({ role, workflow: wf }: { role: Role; work
           )}
         </section>
       </div>
-    </details>
+    </div>
   );
 }

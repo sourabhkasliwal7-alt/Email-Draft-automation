@@ -15,10 +15,10 @@ export async function SuppressionBlock({ role }: { role: Role }) {
   const canAdd = can(role, "suppression.add");
   const canRemove = can(role, "suppression.remove");
   return (
-    <section id="suppression" data-testid="suppression-block" className="space-y-3">
+    <section id="suppression" data-testid="suppression-block" className="space-y-3 rounded-2xl border bg-card p-5 shadow-card">
       <div>
         <h2 className="text-lg font-semibold">Do-not-contact list</h2>
-        <p className="text-sm text-zinc-600">People and companies we must never write to. It is checked when leads are added, before any research is paid for, before every email is written and before every draft is saved.</p>
+        <p className="text-sm text-muted-foreground">People and companies we must never write to. It is checked when leads are added, before any research is paid for, before every email is written and before every draft is saved.</p>
       </div>
       {canAdd && (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -30,7 +30,7 @@ export async function SuppressionBlock({ role }: { role: Role }) {
         <EmptyState>The list is empty.</EmptyState>
       ) : (
         <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase text-zinc-500">
+          <thead className="text-left text-xs uppercase text-muted-foreground">
             <tr><th className="py-2">Entry</th><th>Applies to</th><th>Reason</th><th>Source</th><th>Added (IST)</th><th /></tr>
           </thead>
           <tbody>
