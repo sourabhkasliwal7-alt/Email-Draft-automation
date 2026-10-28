@@ -1,7 +1,9 @@
 "use client";
 
 import { Plus, Save } from "lucide-react";
+import { OFFER_TRIGGER_TYPES } from "@outreach/core";
 import { Field, FormMessage, SubmitButton, TextArea, TextInput, useActionForm } from "@/components/form";
+import { HelpTip } from "@/components/help-tip";
 import { LinkButton } from "@/components/link-button";
 import { Card, CardBody, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { saveCaseStudy, saveOffer } from "./actions";
@@ -9,7 +11,7 @@ import { saveCaseStudy, saveOffer } from "./actions";
 export function OfferForm({
   offer,
 }: {
-  offer?: { id: string; name: string; description: string | null; allowed_claims: string[]; cta_options: string[] };
+  offer?: { id: string; name: string; description: string | null; allowed_claims: string[]; cta_options: string[]; match_terms: string[]; trigger_types: string[] };
 }) {
   const { state, onSubmit: action, pending } = useActionForm(saveOffer);
   const err = state.fieldErrors ?? {};
@@ -48,6 +50,29 @@ export function OfferForm({
           >
             <TextArea name="ctaOptions" rows={3} defaultValue={offer?.cta_options.join("\n")} />
           </Field>
+          <Field
+            label="Fits these businesses"
+            name="matchTerms"
+            error={err.matchTerms}
+            hint="Business types, industries or keywords, comma separated. For example: agency, web design"
+            help="When a campaign has several offers, each lead gets the offer whose words match the lead's business type or industry. Whole words are matched, ignoring capitals and plural endings (agency matches agencies). If no offer matches, the campaign's default offer is used."
+          >
+            <TextArea name="matchTerms" rows={2} defaultValue={offer?.match_terms.join(", ")} placeholder="agency, web design" />
+          </Field>
+          <fieldset className="space-y-2.5" data-field="triggerTypes" data-testid="offer-trigger-types">
+            <legend className="flex items-center gap-1.5 text-sm font-medium">
+              Fits best when the company shows this sign (optional)
+              <HelpTip label="Trigger types">A trigger is a recent, checkable sign that the company may need you, such as hiring developers or raising funding. A matching trigger makes this offer more likely to be chosen. If you list no businesses above, the trigger alone decides.</HelpTip>
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {OFFER_TRIGGER_TYPES.map((t) => (
+                <label key={t.value} className="flex cursor-pointer items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-sm transition-colors hover:border-zinc-400 focus-within:ring-3 focus-within:ring-ring/30">
+                  <input type="checkbox" name="triggerTypes" value={t.value} defaultChecked={offer?.trigger_types.includes(t.value)} className="size-4 rounded accent-[var(--brand)]" />
+                  {t.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <FormMessage state={state} />
         </CardBody>
         <CardFooter>

@@ -33,11 +33,11 @@ insert into public.inboxes (id, email, display_name, status)
 values ('00000000-0000-4000-8000-0000000000c1', 'demo-sender@example.com', 'Demo Sender', 'disconnected')
 on conflict (id) do nothing;
 
-insert into public.campaigns (id, name, icp, target_roles, regions, offer_id, tone, cta, inbox_id, status)
+insert into public.campaigns (id, name, icp, target_roles, regions, offer_id, offer_ids, tone, cta, inbox_id, status)
 values ('00000000-0000-4000-8000-0000000000d1', 'Demo campaign',
         '{"industries":["saas","logistics"],"employee_range":[20,500]}'::jsonb,
         array['Head of Operations','COO'], array['IN','US'],
-        '00000000-0000-4000-8000-0000000000a1', 'plain, specific, short',
+        '00000000-0000-4000-8000-0000000000a1', array['00000000-0000-4000-8000-0000000000a1']::uuid[], 'plain, specific, short',
         'Open to a 20-minute call next week?', '00000000-0000-4000-8000-0000000000c1', 'draft')
 on conflict (id) do nothing;
 

@@ -8,7 +8,7 @@ export default async function NewCampaignPage() {
   await requireUser("campaign.manage");
   const supabase = await createClient();
   const [{ data: offers }, { data: inboxes }] = await Promise.all([
-    supabase.from("offers").select("id, name, case_studies(title, deleted_at)").is("deleted_at", null).order("name"),
+    supabase.from("offers").select("id, name, match_terms, case_studies(title, deleted_at)").is("deleted_at", null).order("name"),
     supabase.from("inboxes").select("id, email").is("deleted_at", null).order("email"),
   ]);
   return (
@@ -24,6 +24,7 @@ export default async function NewCampaignPage() {
           offers={(offers ?? []).map((o) => ({
             id: o.id,
             name: o.name,
+            matchTerms: o.match_terms,
             caseStudies: o.case_studies.filter((c) => !c.deleted_at).map((c) => c.title),
           }))}
           inboxes={inboxes ?? []}

@@ -31,11 +31,11 @@ export async function loadCampaignOfferFacts() {
 /** Setup > Campaigns: who to target, where the leads come from, and which mailbox saves the drafts. */
 export async function CampaignsTab({ role }: { role: Role }) {
   const supabase = await createClient();
-  const { data: campaigns } = await supabase
-    .from("campaigns")
-    .select("id, name, status, daily_cap, icp, offers(name), inboxes(email)")
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
+  const [{ data: campaigns }, { data: offerNames }] = await Promise.all([
+    supabase.from("campaigns").select("id, name, status, daily_cap, icp, offer_id, offer_ids, inboxes(email)").is("deleted_at", null).order("created_at", { ascending: false }),
+    supabase.from("offers").select("id, name"),
+  ]);
+  const offerName = new Map((offerNames ?? []).map((o) => [o.id, o.name]));
   const manage = can(role, "campaign.manage");
   return (
     <div id="campaign" data-testid="section-campaign" className="space-y-4">
@@ -81,7 +81,20 @@ export async function CampaignsTab({ role }: { role: Role }) {
                       <td className="px-3 py-3">
                         <Badge tone={st.tone}>{st.text}</Badge>
                       </td>
-                      <td className="px-3 py-3">{c.offers?.name ?? <Badge tone="amber">No offer selected</Badge>}</td>
+                      <td className="px-3 py-3" data-testid="campaign-offers">
+                        {c.offer_ids.length || c.offer_id ? (
+                          <ul className="space-y-0.5">
+                            {[...new Set([...(c.offer_id ? [c.offer_id] : []), ...c.offer_ids])].map((id) => (
+                              <li key={id}>
+                                {offerName.get(id) ?? "Archived offer"}
+                                {id === c.offer_id && c.offer_ids.length > 1 && <span className="ml-1.5 text-xs text-muted-foreground">(default)</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <Badge tone="amber">No offer selected</Badge>
+                        )}
+                      </td>
                       <td className="px-3 py-3">{c.inboxes?.email ?? <Badge tone="amber">No mailbox selected</Badge>}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{c.daily_cap}</td>
                       <td className="px-5 py-2.5">

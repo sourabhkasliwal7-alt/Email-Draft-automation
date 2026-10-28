@@ -7,7 +7,7 @@ declare
 begin
   insert into public.inboxes (email, status) values ('hs-inbox@test.invalid', 'active') returning id into v_inbox;
   insert into public.offers (name) values ('HS offer') returning id into v_offer;
-  insert into public.campaigns (name, inbox_id, offer_id) values ('HS campaign', v_inbox, v_offer) returning id into v_camp;
+  insert into public.campaigns (name, inbox_id, offer_id, offer_ids) values ('HS campaign', v_inbox, v_offer, array[v_offer]) returning id into v_camp;
   v_draft := pg_temp.mk_draft(v_camp, v_inbox, 'Hist.Lead@HS-Test.invalid', 'hs1', v_admin);
   select cl.id, cl.contact_id into v_lead, v_ct from public.campaign_leads cl join public.email_drafts d on d.campaign_lead_id = cl.id where d.id = v_draft;
   select company_id into v_co from public.contacts where id = v_ct;

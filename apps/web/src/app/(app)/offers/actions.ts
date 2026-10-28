@@ -9,13 +9,15 @@ import { dbErrorMessage, validate } from "@/lib/forms";
 export async function saveOffer(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const guard = await guardAction("offer.manage");
   if (!guard.ok) return guard.state;
-  const v = validate(offerSchema, formData);
+  const v = validate(offerSchema, formData, { arrays: ["triggerTypes"] });
   if (!v.ok) return v.state;
   const row = {
     name: v.data.name,
     description: v.data.description,
     allowed_claims: splitLines(v.data.allowedClaims),
     cta_options: splitLines(v.data.ctaOptions),
+    match_terms: splitList(v.data.matchTerms),
+    trigger_types: v.data.triggerTypes,
   };
   const id = String(formData.get("id") ?? "");
   if (id) {

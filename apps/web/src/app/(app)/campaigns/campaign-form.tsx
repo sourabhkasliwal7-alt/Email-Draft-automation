@@ -36,6 +36,9 @@ export interface CampaignDefaults {
   scoreDraftMin: number;
   scoreReviewMin: number;
   dailyCap: number;
+  /** the offers this campaign may use */
+  offerIds: string[];
+  /** the default offer: used for a lead when no offer rule matches it */
   offerId: string;
   tone: string;
   cta: string;
@@ -69,6 +72,7 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
   scoreDraftMin: 70,
   scoreReviewMin: 50,
   dailyCap: 20,
+  offerIds: [],
   offerId: "",
   tone: "",
   cta: "",
@@ -127,7 +131,7 @@ export function CampaignForm({
   inboxes,
 }: {
   defaults: CampaignDefaults;
-  offers: { id: string; name: string; caseStudies: string[] }[];
+  offers: { id: string; name: string; caseStudies: string[]; matchTerms: string[] }[];
   inboxes: { id: string; email: string }[];
 }) {
   const { state, onSubmit: action, pending } = useActionForm(saveCampaign);
@@ -135,6 +139,7 @@ export function CampaignForm({
   const [sourceError, setSourceError] = useState("");
   // the web-query preview follows what is typed in the target fields
   const [target, setTarget] = useState({ industries: defaults.industries, countries: defaults.countries, keywordsInclude: defaults.keywordsInclude, webQueries: defaults.webQueries, maxQueries: defaults.webMaxQueries });
+  const [offerIds, setOfferIds] = useState<string[]>(defaults.offerIds);
   const [offerId, setOfferId] = useState(defaults.offerId);
   const [seniority, setSeniority] = useState<string[]>(defaults.seniorities.split(",").map((s) => s.trim()).filter(Boolean));
   const err = state.fieldErrors ?? {};
@@ -163,7 +168,13 @@ export function CampaignForm({
     const get = (k: string) => String(fd.get(k) ?? "");
     setTarget({ industries: get("industries"), countries: get("countries"), keywordsInclude: get("keywordsInclude"), webQueries: get("webQueries"), maxQueries: get("webMaxQueries") });
   };
-  const studies = offers.find((o) => o.id === offerId)?.caseStudies ?? [];
+  const chosen = offers.filter((o) => offerIds.includes(o.id));
+  // ticking keeps the default valid: the first ticked offer becomes the default when there is none, or when the default is unticked
+  const tickOffer = (id: string, on: boolean) => {
+    const next = on ? [...offerIds, id] : offerIds.filter((x) => x !== id);
+    setOfferIds(next);
+    if (!next.includes(offerId)) setOfferId(next[0] ?? "");
+  };
 
   return (
     <form onSubmit={submit} onInput={track} className="max-w-3xl space-y-6" noValidate data-testid="campaign-form">
@@ -354,11 +365,74 @@ export function CampaignForm({
         </div>
       </Block>
 
-      <Block testId="block-offer" title="5. What you offer" description="The offer the emails talk about. Emails may only make the claims and quote the numbers you list on the offer.">
-        <Field label="Offer" name="offerId" error={err.offerId} help="What you are offering these companies. It is set up under Setup, Offers. The emails only use the claims and case-study numbers listed there.">
+      <Block
+        testId="block-offer"
+        title="5. What you offer"
+        description="Tick every offer this campaign may talk about. Each lead gets the offer whose rules fit its business; the default offer is used when none fits. Emails may only make the claims and quote the numbers you list on the offer."
+      >
+        <fieldset className="space-y-2.5" data-field="offerIds" data-testid="offer-options">
+          <legend className="flex items-center gap-1.5 text-sm font-medium">
+            Offers for this campaign
+            <HelpTip label="Offers for this campaign">
+              Tick one or more offers (at least one). With several, the app picks the offer for each lead by the rules on the offer (the business types and trigger signs it fits), and shows which one it picked and why. Offers are set up under Setup, Offers.
+            </HelpTip>
+          </legend>
+          {offers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No offer yet.{" "}
+              <a href="/offers/new" target="_blank" rel="noreferrer" className="font-medium text-brand underline underline-offset-2">
+                Create an offer
+              </a>{" "}
+              and reload this page.
+            </p>
+          ) : (
+            <div className="grid gap-2.5">
+              {offers.map((o) => {
+                const on = offerIds.includes(o.id);
+                return (
+                  <div key={o.id} className={cn("flex items-start gap-2.5 rounded-xl border px-3.5 py-3 transition-colors focus-within:ring-3 focus-within:ring-ring/30", on ? "border-brand bg-brand-tint" : "bg-card hover:border-zinc-400")}>
+                    <label className="flex flex-1 cursor-pointer items-start gap-2.5 text-sm">
+                      <input
+                        type="checkbox"
+                        name="offerIds"
+                        value={o.id}
+                        checked={on}
+                        onChange={(e) => tickOffer(o.id, e.target.checked)}
+                        data-testid={`offer-${o.id}`}
+                        className="mt-0.5 size-[1.1rem] shrink-0 rounded border-input accent-[var(--brand)]"
+                      />
+                      <span>
+                        <span className="font-medium text-foreground">{o.name}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {o.matchTerms.length ? `Fits: ${o.matchTerms.join(", ")}` : "No matching rules yet: only used as the default"}
+                          {o.caseStudies.length ? ` · ${o.caseStudies.length} case ${o.caseStudies.length === 1 ? "study" : "studies"}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                    <a href={`/offers/${o.id}`} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-brand underline underline-offset-2">
+                      Edit rules
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {err.offerIds && (
+            <p role="alert" data-testid="error-offerIds" className="text-xs font-medium text-red-700">
+              {err.offerIds}
+            </p>
+          )}
+        </fieldset>
+        <Field
+          label="Default offer"
+          name="offerId"
+          error={err.offerId}
+          hint="Used for a lead when none of the offer rules fits it."
+          help="Choose it from the offers you ticked. A campaign with one offer uses it for every lead."
+        >
           <select id="offerId" name="offerId" value={offerId} onChange={(e) => setOfferId(e.target.value)} className={`${inputClass} pr-9`}>
-            <option value="">No offer chosen</option>
-            {offers.map((o) => (
+            <option value="">{chosen.length ? "Choose the default offer" : "Tick an offer first"}</option>
+            {chosen.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.name}
               </option>
@@ -366,12 +440,10 @@ export function CampaignForm({
           </select>
         </Field>
         <p className="text-sm text-muted-foreground" data-testid="offer-case-studies">
-          {offerId ? (studies.length ? `Case studies the emails may quote: ${studies.join(", ")}.` : "This offer has no case study yet.") : "Choose an offer to see its case studies."}{" "}
-          {offerId && (
-            <a href={`/offers/${offerId}`} target="_blank" rel="noreferrer" className="font-medium text-brand underline underline-offset-2">
-              Add or edit case studies
-            </a>
-          )}
+          {chosen.length
+            ? chosen.map((o) => `${o.name}: ${o.caseStudies.length ? o.caseStudies.join(", ") : "no case study yet"}`).join(" · ")
+            : "Tick an offer to see its case studies."}{" "}
+          <span className="block text-xs">For each lead the case study is chosen from the chosen offer&apos;s case studies by the industries listed on them.</span>
         </p>
         <details className="rounded-xl border bg-brand-soft/50 p-4 text-sm open:bg-card">
           <summary className="cursor-pointer font-medium">Tone and call to action (optional)</summary>

@@ -12,6 +12,9 @@ import {
   toCsv,
 } from "../src";
 
+const OFFER_A = "00000000-0000-4000-8000-0000000000a1";
+const OFFER_B = "00000000-0000-4000-8000-0000000000a2";
+
 const validCampaign = {
   name: "  Q4 SaaS  ",
   industries: "saas, fintech\nsaas",
@@ -23,7 +26,8 @@ const validCampaign = {
   scoreDraftMin: "70",
   scoreReviewMin: "50",
   dailyCap: "20",
-  offerId: "",
+  offerIds: [OFFER_A, OFFER_B],
+  offerId: OFFER_A,
   tone: " plain ",
   cta: "",
   inboxId: "",
@@ -46,7 +50,8 @@ describe("campaignSchema", () => {
     expect(row.target_roles).toEqual(["COO", "Head of Operations"]);
     expect(row.tone).toBe("plain");
     expect(row.cta).toBeNull();
-    expect(row.offer_id).toBeNull();
+    expect(row.offer_ids).toEqual([OFFER_A, OFFER_B]);
+    expect(row.offer_id).toBe(OFFER_A);
     expect(row.send_window).toEqual({ tz: "Asia/Kolkata", days: [1, 2, 3], start: "10:00", end: "17:00" });
   });
 
@@ -73,6 +78,24 @@ describe("campaignSchema", () => {
     expect(msgs["sendDays"]).toMatch(/at least one send day/);
   });
 
+  it("needs at least one offer, and a default that is one of the ticked offers", () => {
+    const none = campaignSchema.safeParse({ ...validCampaign, offerIds: [], offerId: "" });
+    expect(none.success).toBe(false);
+    if (!none.success) expect(none.error.issues.find((i) => i.path[0] === "offerIds")?.message).toBe("Choose at least one offer");
+
+    const outside = campaignSchema.safeParse({ ...validCampaign, offerIds: [OFFER_A], offerId: OFFER_B });
+    expect(outside.success).toBe(false);
+    if (!outside.success) expect(outside.error.issues.find((i) => i.path[0] === "offerId")?.message).toMatch(/default offer/);
+
+    const noDefault = campaignSchema.safeParse({ ...validCampaign, offerId: "" });
+    expect(noDefault.success).toBe(false);
+  });
+
+  it("saves each offer once", () => {
+    const r = campaignSchema.parse({ ...validCampaign, offerIds: [OFFER_A, OFFER_A, OFFER_B] });
+    expect(campaignToRow(r).offer_ids).toEqual([OFFER_A, OFFER_B]);
+  });
+
   it("research-first campaigns do not require an email", () => {
     const r = campaignSchema.parse({ ...validCampaign, researchFirst: true });
     expect(campaignToRow(r).icp.requireEmail).toBe(false);
@@ -83,6 +106,14 @@ describe("offer / case study helpers", () => {
   it("offer needs a name", () => {
     expect(offerSchema.safeParse({ name: "" }).success).toBe(false);
     expect(offerSchema.safeParse({ name: "Audit" }).success).toBe(true);
+  });
+
+  it("offer matching rules are optional and trigger types must be known", () => {
+    const ok = offerSchema.parse({ name: "Audit", matchTerms: "agency, web design", triggerTypes: ["hiring-developers", "funding"] });
+    expect(ok.matchTerms).toBe("agency, web design");
+    expect(ok.triggerTypes).toEqual(["hiring-developers", "funding"]);
+    expect(offerSchema.parse({ name: "Audit" }).triggerTypes).toEqual([]);
+    expect(offerSchema.safeParse({ name: "Audit", triggerTypes: ["made-up"] }).success).toBe(false);
   });
   it("parses allowed numbers and reports the bad line", () => {
     expect(parseAllowedNumbers("hours saved = 12\nreply_rate: 3.5").value).toEqual({ "hours saved": 12, reply_rate: 3.5 });

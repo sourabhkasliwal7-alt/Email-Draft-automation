@@ -51,7 +51,7 @@ describe("lead sources", () => {
 });
 
 describe("campaign form with lead sources", () => {
-  const base = { name: "Agencies", industries: "saas", countries: "IN", employeeMin: "", employeeMax: "", targetRoles: "COO", regions: "", scoreDraftMin: "70", scoreReviewMin: "50", dailyCap: "10", offerId: "", tone: "plain", cta: "", inboxId: "", researchDepth: "standard", sendDays: ["1", "2", "3"], sendStart: "10:00", sendEnd: "17:00" };
+  const base = { name: "Agencies", industries: "saas", countries: "IN", employeeMin: "", employeeMax: "", targetRoles: "COO", regions: "", scoreDraftMin: "70", scoreReviewMin: "50", dailyCap: "10", offerIds: ["00000000-0000-4000-8000-0000000000a1"], offerId: "00000000-0000-4000-8000-0000000000a1", tone: "plain", cta: "", inboxId: "", researchDepth: "standard", sendDays: ["1", "2", "3"], sendStart: "10:00", sendEnd: "17:00" };
 
   it("saves the ticked sources, the typed queries and the caps", () => {
     const row = campaignToRow(campaignSchema.parse({ ...base, leadSources: ["apollo", "web"], webQueries: "react agency india\n\n  nextjs agency hiring \n", webMaxQueries: "6", webMaxResults: "8" }));

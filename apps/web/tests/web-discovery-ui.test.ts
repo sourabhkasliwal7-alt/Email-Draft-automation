@@ -29,7 +29,7 @@ describe("lead sources in the form", () => {
     expect(sourceShort("web")).toBe("Web");
   });
 
-  const base = { name: "Agencies", industries: "saas", countries: "IN", targetRoles: "Founder", dailyCap: "20", status: "active", scoreDraftMin: "70", scoreReviewMin: "50", researchDepth: "standard", sendDays: ["1", "2"], sendStart: "10:00", sendEnd: "17:00" };
+  const base = { name: "Agencies", industries: "saas", countries: "IN", targetRoles: "Founder", dailyCap: "20", offerIds: ["00000000-0000-4000-8000-0000000000a1"], offerId: "00000000-0000-4000-8000-0000000000a1", status: "active", scoreDraftMin: "70", scoreReviewMin: "50", researchDepth: "standard", sendDays: ["1", "2"], sendStart: "10:00", sendEnd: "17:00" };
 
   it("a campaign form with three ticked sources saves the list, the old word and the web settings", () => {
     const v = campaignSchema.parse({ ...base, leadSources: ["csv", "apollo", "web"], webQueries: "saas agency pune\n\nsaas agency hiring react", webMaxQueries: "5", webMaxResults: "8" });

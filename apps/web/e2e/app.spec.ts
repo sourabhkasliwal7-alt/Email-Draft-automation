@@ -6,6 +6,7 @@ test.describe.configure({ mode: "serial" });
 
 const CAMPAIGN = `e2e-campaign-${RUN}`;
 const OFFER = `e2e-offer-${RUN}`;
+const CAMPAIGN_OFFER = `e2e-offer-camp-${RUN}`;
 
 test("anonymous visitors are sent to the login page", async ({ page }) => {
   await page.goto("/campaigns");
@@ -29,6 +30,8 @@ test("wrong password shows one generic error, correct password signs in", async 
 });
 
 test("operator creates a campaign on one page, with clear validation and Apollo filters", async ({ page }) => {
+  // a campaign needs an offer; it stays in use by the campaign, so the cleanup script (e2e-offer-%) removes it later
+  const { data: offer } = await adminClient().from("offers").insert({ name: CAMPAIGN_OFFER, allowed_claims: ["Fixed-scope audit"], match_terms: ["agency"] }).select("id").single();
   await loginAs(page, "operator");
   await page.goto("/setup?tab=campaigns");
   await page.getByTestId("new-campaign").click();
@@ -37,8 +40,11 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   // nothing filled in -> one clear error, everything is on this one page
   await page.getByRole("button", { name: "Create campaign" }).click();
   await expect(page.getByTestId("error-name")).toHaveText("Campaign name is required");
+  await expect(page.getByTestId("error-offerIds")).toHaveText("Choose at least one offer");
 
   await page.getByLabel("Campaign name").fill(CAMPAIGN);
+  await page.getByTestId(`offer-${offer!.id}`).check();
+  await expect(page.getByLabel("Default offer")).toHaveValue(offer!.id); // the only ticked offer is the default
   // CSV is ticked by default; ticking none is refused with one clear message
   await expect(page.getByTestId("source-csv")).toBeChecked();
   await page.getByTestId("source-csv").uncheck();
@@ -85,7 +91,8 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   await expect(row).toContainText("Active");
 
   // the Apollo filters were stored in the campaign
-  const { data } = await adminClient().from("campaigns").select("icp, target_roles").eq("name", CAMPAIGN).single();
+  const { data } = await adminClient().from("campaigns").select("icp, target_roles, offer_id, offer_ids").eq("name", CAMPAIGN).single();
+  expect(data).toMatchObject({ offer_id: offer!.id, offer_ids: [offer!.id] });
   expect(data!.icp).toMatchObject({ leadSources: ["csv", "apollo", "web"], leadSource: "mix", webQueries: ["saas agency pune", "logistics agency hiring react"], webMaxQueries: 4, webMaxResults: 6, seniorities: ["founder", "director"], hiringTitles: ["developer"], minOpenJobs: 3, employeeMin: 500, employeeMax: 5000, industries: ["saas", "logistics"] });
   expect(data!.target_roles).toEqual(["COO", "Head of Operations"]);
 
@@ -130,12 +137,12 @@ test("operator adds an offer and a case study with allowed numbers", async ({ pa
   await expect(page.getByTestId("case-study-row").filter({ hasText: `e2e-case-${RUN}` })).toContainText("hours saved: 12");
 
   // back in Setup the offer shows with its case study, and the campaign form lists that case study when the offer is chosen
-  await page.getByRole("link", { name: /Setup/ }).first().click();
+  await page.goto("/setup?tab=offers");
   const offerRow = page.getByTestId("offer-row").filter({ hasText: OFFER });
   await expect(offerRow).toContainText("2 allowed claims");
   await expect(offerRow).toContainText(`e2e-case-${RUN}`);
   await page.goto("/campaigns/new");
-  await page.getByLabel("Offer", { exact: true }).selectOption({ label: OFFER });
+  await page.getByRole("checkbox", { name: new RegExp(OFFER) }).check();
   await expect(page.getByTestId("offer-case-studies")).toContainText(`e2e-case-${RUN}`);
 });
 

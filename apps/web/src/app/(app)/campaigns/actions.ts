@@ -9,7 +9,7 @@ import { dbErrorMessage, validate } from "@/lib/forms";
 export async function saveCampaign(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const guard = await guardAction("campaign.manage");
   if (!guard.ok) return guard.state;
-  const v = validate(campaignSchema, formData, { arrays: ["sendDays", "leadSources"], booleans: ["researchFirst"] });
+  const v = validate(campaignSchema, formData, { arrays: ["sendDays", "leadSources", "offerIds"], booleans: ["researchFirst"] });
   if (!v.ok) return v.state;
 
   const row = campaignToRow(v.data);

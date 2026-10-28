@@ -49,6 +49,7 @@ export type Database = {
       }
       campaign_leads: {
         Row: {
+          offer_reason: string | null
           campaign_id: string
           case_study_id: string | null
           contact_id: string
@@ -75,6 +76,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          offer_reason?: string | null
           campaign_id: string
           case_study_id?: string | null
           contact_id: string
@@ -101,6 +103,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          offer_reason?: string | null
           campaign_id?: string
           case_study_id?: string | null
           contact_id?: string
@@ -166,6 +169,7 @@ export type Database = {
       }
       campaigns: {
         Row: {
+          offer_ids: string[]
           created_at: string
           cta: string | null
           daily_cap: number
@@ -186,6 +190,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          offer_ids?: string[]
           created_at?: string
           cta?: string | null
           daily_cap?: number
@@ -206,6 +211,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          offer_ids?: string[]
           created_at?: string
           cta?: string | null
           daily_cap?: number
@@ -1183,6 +1189,8 @@ export type Database = {
       }
       offers: {
         Row: {
+          match_terms: string[]
+          trigger_types: string[]
           allowed_claims: string[]
           created_at: string
           cta_options: string[]
@@ -1193,6 +1201,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          match_terms?: string[]
+          trigger_types?: string[]
           allowed_claims?: string[]
           created_at?: string
           cta_options?: string[]
@@ -1203,6 +1213,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          match_terms?: string[]
+          trigger_types?: string[]
           allowed_claims?: string[]
           created_at?: string
           cta_options?: string[]

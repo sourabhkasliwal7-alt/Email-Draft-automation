@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { LEAD_SOURCES, legacySourceWord, sourcesOf, type LeadSource } from "./discovery";
 import { normalizeDomain, normalizeEmail } from "./normalize";
+import { OFFER_TRIGGER_TYPES } from "./offers";
 
 /** Comma / newline separated text -> trimmed, de-duplicated list. */
 export function splitList(input: string | null | undefined): string[] {
@@ -98,7 +99,9 @@ export const campaignSchema = z
     scoreDraftMin: percent("Draft threshold"),
     scoreReviewMin: percent("Review threshold"),
     dailyCap: count("Daily cap", 10000),
-    offerId: z.string().uuid("Choose an offer").or(z.literal("")).default(""),
+    /** the offers this campaign may use (at least one) and the one used when no rule matches a lead */
+    offerIds: z.array(z.string().uuid()).default([]),
+    offerId: z.string().uuid("Choose the default offer").or(z.literal("")).default(""),
     tone: optionalText,
     cta: optionalText,
     inboxId: z.string().uuid().or(z.literal("")).default(""),
@@ -112,6 +115,8 @@ export const campaignSchema = z
     if (v.scoreReviewMin > v.scoreDraftMin)
       ctx.addIssue({ code: "custom", path: ["scoreReviewMin"], message: "Review threshold cannot be higher than the draft threshold" });
     if (v.sendStart >= v.sendEnd) ctx.addIssue({ code: "custom", path: ["sendEnd"], message: "Send window must end after it starts" });
+    if (v.offerIds.length === 0) ctx.addIssue({ code: "custom", path: ["offerIds"], message: "Choose at least one offer" });
+    else if (!v.offerIds.includes(v.offerId)) ctx.addIssue({ code: "custom", path: ["offerId"], message: "Choose the default offer from the offers you ticked" });
     const jobs = v.minOpenJobs.trim() === "" ? null : Number(v.minOpenJobs);
     if (jobs !== null && (!Number.isInteger(jobs) || jobs < 0)) ctx.addIssue({ code: "custom", path: ["minOpenJobs"], message: "Open jobs must be a whole number" });
     const min = v.employeeMin.trim() === "" ? null : Number(v.employeeMin);
@@ -154,6 +159,7 @@ export function campaignToRow(v: CampaignInput) {
     score_draft_min: v.scoreDraftMin,
     score_review_min: v.scoreReviewMin,
     daily_cap: v.dailyCap,
+    offer_ids: [...new Set(v.offerIds)],
     offer_id: v.offerId || null,
     tone: v.tone,
     cta: v.cta,
@@ -169,6 +175,10 @@ export const offerSchema = z.object({
   description: optionalText,
   allowedClaims: z.string().default(""),
   ctaOptions: z.string().default(""),
+  /** business types / industries / keywords this offer fits, comma or line separated (used to choose the offer for a lead) */
+  matchTerms: z.string().default(""),
+  /** trigger types this offer fits best (optional) */
+  triggerTypes: z.array(z.enum(OFFER_TRIGGER_TYPES.map((t) => t.value) as [string, ...string[]])).default([]),
 });
 
 export const caseStudySchema = z.object({

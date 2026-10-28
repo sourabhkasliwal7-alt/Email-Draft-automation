@@ -12,7 +12,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   const supabase = await createClient();
   const [{ data: c }, { data: offers }, { data: inboxes }] = await Promise.all([
     supabase.from("campaigns").select("*").eq("id", id).is("deleted_at", null).maybeSingle(),
-    supabase.from("offers").select("id, name, case_studies(title, deleted_at)").is("deleted_at", null).order("name"),
+    supabase.from("offers").select("id, name, match_terms, case_studies(title, deleted_at)").is("deleted_at", null).order("name"),
     supabase.from("inboxes").select("id, email").is("deleted_at", null).order("email"),
   ]);
   if (!c) notFound();
@@ -43,7 +43,9 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
     scoreDraftMin: c.score_draft_min,
     scoreReviewMin: c.score_review_min,
     dailyCap: c.daily_cap,
-    offerId: c.offer_id ?? "",
+    // a campaign saved before several offers existed has only offer_id: it becomes the one offer and the default
+    offerIds: [...new Set([...c.offer_ids, ...(c.offer_id ? [c.offer_id] : [])])],
+    offerId: c.offer_id ?? c.offer_ids[0] ?? "",
     tone: c.tone ?? "",
     cta: c.cta ?? "",
     inboxId: c.inbox_id ?? "",
@@ -66,6 +68,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
           offers={(offers ?? []).map((o) => ({
             id: o.id,
             name: o.name,
+            matchTerms: o.match_terms,
             caseStudies: o.case_studies.filter((x) => !x.deleted_at).map((x) => x.title),
           }))}
           inboxes={inboxes ?? []}
