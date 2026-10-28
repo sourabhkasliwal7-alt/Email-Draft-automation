@@ -154,7 +154,11 @@ export function CampaignForm({
     }
     action(e);
   };
+  // Only the fields the preview reads. Re-rendering on the input event of ANY field would make React reset a controlled <select>
+  // (the offer) to its old value before its change event arrives, so the choice would jump back.
   const track = (e: React.FormEvent<HTMLFormElement>) => {
+    const field = (e.target as { name?: string }).name ?? "";
+    if (!["industries", "countries", "keywordsInclude", "webQueries", "webMaxQueries"].includes(field)) return;
     const fd = new FormData(e.currentTarget);
     const get = (k: string) => String(fd.get(k) ?? "");
     setTarget({ industries: get("industries"), countries: get("countries"), keywordsInclude: get("keywordsInclude"), webQueries: get("webQueries"), maxQueries: get("webMaxQueries") });
