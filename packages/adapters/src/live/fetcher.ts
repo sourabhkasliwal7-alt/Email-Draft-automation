@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import type { FetcherAdapter } from "../types";
+import type { FetchedPage, FetcherAdapter } from "../types";
 import type { FetchLike } from "./http";
 
 const MAX_BYTES = 1_500_000;
@@ -99,8 +99,25 @@ export function htmlToText(html: string): string {
 /** A page that is a bot wall, not content. We report it as unreadable and never try to get past it. */
 const WALL = /captcha|verify (that )?you are (a )?human|are you a robot|checking your browser|access denied|enable javascript and cookies|attention required/i;
 
+/** A refusal on our side (a local address, a bad protocol). Never retried through the reader. */
+class RefusedFetch extends Error {}
+
+export const JINA_READER_URL = "https://r.jina.ai/";
+/** a page with less readable text than this counts as "could not be read" (a script-only shell, a thin or empty page) */
+const THIN_TEXT = 200;
+
+export interface ReaderOptions {
+  /** switch the fallback off (FETCHER_READER=off) */
+  enabled?: boolean;
+  baseUrl?: string;
+  /** optional Jina key (JINA_API_KEY) for a higher rate limit; the free reader works without one */
+  apiKey?: string;
+}
+
 export interface LiveFetcherOptions {
   fetchImpl?: FetchLike;
+  /** Jina Reader fallback, tried only when our own fetch could not read a page (see createLiveFetcher) */
+  reader?: ReaderOptions;
   userAgent?: string;
   /** resolves a hostname to its IP addresses (replaceable in tests) */
   resolve?: (host: string) => Promise<string[]>;
@@ -118,11 +135,11 @@ export function createLiveFetcher(opts: LiveFetcherOptions = {}): FetcherAdapter
   const robots = new Map<string, Promise<RobotsRules | "blocked">>();
 
   async function assertPublic(u: URL) {
-    if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error(`unsupported protocol ${u.protocol}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") throw new RefusedFetch(`unsupported protocol ${u.protocol}`);
     const host = u.hostname.replace(/^\[|\]$/g, "");
-    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) throw new Error("refusing to fetch a local address");
+    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) throw new RefusedFetch("refusing to fetch a local address");
     const addrs = isIP(host) ? [host] : await resolve(host);
-    if (!addrs.length || addrs.some(isPrivateAddress)) throw new Error("refusing to fetch a private or unresolvable address");
+    if (!addrs.length || addrs.some(isPrivateAddress)) throw new RefusedFetch("refusing to fetch a private or unresolvable address");
   }
 
   const get = (url: string, accept: string) => fetchImpl(url, { redirect: "manual", headers: { "user-agent": ua, accept, "accept-language": "en" }, signal: AbortSignal.timeout(timeoutMs) });
@@ -145,8 +162,54 @@ export function createLiveFetcher(opts: LiveFetcherOptions = {}): FetcherAdapter
     return p;
   }
 
+  const reader = { enabled: true, baseUrl: JINA_READER_URL, ...opts.reader };
+
+  /**
+   * Jina Reader (r.jina.ai/<url>) returns the readable text of a public page, including pages that only draw themselves with scripts.
+   * It is the fallback, used ONLY when our own fetch could not read the page: a connection error, or a page with (almost) no text.
+   * It is never used after robots.txt said no, after a login, paywall, CAPTCHA or any 4xx answer, or for a local address: those are
+   * blocks, and a block is never worked around.
+   */
+  async function viaReader(url: string): Promise<FetchedPage | null> {
+    try {
+      const res = await fetchImpl(`${reader.baseUrl}${url}`, {
+        headers: { accept: "text/plain", "x-return-format": "text", "user-agent": ua, ...(reader.apiKey ? { authorization: `Bearer ${reader.apiKey}` } : {}) },
+        signal: AbortSignal.timeout(Math.max(timeoutMs, 30_000)),
+      });
+      if (res.status !== 200) return null;
+      const body = (await res.text()).replace(/^(?:(?:Title|URL Source|Published Time|Warning|Markdown Content):[^\n]*\n)+/i, "").replace(/^\s*Markdown Content:\s*/i, "").trim();
+      const text = body.slice(0, MAX_TEXT_CHARS);
+      if (text.length < THIN_TEXT || (text.length < 2000 && WALL.test(text))) return null;
+      return { url, status: 200, text, retrievedAt: new Date().toISOString() };
+    } catch {
+      return null;
+    }
+  }
+
   return {
     async fetchPage(url) {
+      let first: FetchedPage | null = null;
+      let failure: unknown = null;
+      try {
+        first = await fetchPlain(url);
+      } catch (e) {
+        const code = (e as { cause?: { code?: string } }).cause?.code ?? (e as { code?: string }).code;
+        if (e instanceof RefusedFetch || code === "ENOTFOUND") throw e;
+        failure = e; // a connection problem or a timeout: the reader may still be able to read the page
+      }
+      const unreadable = first ? first.status === 200 && first.text.trim().length < THIN_TEXT : true;
+      if (!unreadable) return first!;
+      if (reader.enabled) {
+        const read = await viaReader(first?.url ?? url);
+        if (read) return read;
+      }
+      if (first) return first;
+      throw failure;
+    },
+  };
+
+  async function fetchPlain(url: string): Promise<FetchedPage> {
+    {
       const retrievedAt = new Date().toISOString();
       let current = new URL(url);
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -177,6 +240,6 @@ export function createLiveFetcher(opts: LiveFetcherOptions = {}): FetcherAdapter
         return { url: current.toString(), status: 200, text, retrievedAt };
       }
       return { url: current.toString(), status: 310, text: "", retrievedAt }; // too many redirects
-    },
-  };
+    }
+  }
 }

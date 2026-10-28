@@ -166,3 +166,47 @@ export async function latestWebFinds(): Promise<Record<string, WebFindRow>> {
   }
   return out;
 }
+
+// ---------------------------------------------------------------- Re-check skipped leads
+/** What the worker stores on a `screen.recheck` job: the quick check run again for leads skipped as not a fit or unreadable. */
+export interface RecheckResult {
+  total?: number;
+  passed?: number;
+  stillNo?: number;
+  stillUnreadable?: number;
+  suppressed?: number;
+  failed?: number;
+  note?: string;
+}
+
+export interface RecheckRow {
+  state: "waiting" | "running" | "done" | "failed";
+  queuedAt: string;
+  waitingTooLong: boolean;
+  result: RecheckResult | null;
+  error: string | null;
+}
+
+/** Queues the quick check again for the skipped leads of one campaign. Call after a permission check. */
+export async function queueScreenRecheck(campaignId: string): Promise<{ ok: boolean; message: string }> {
+  const db = createServiceDb();
+  const since = new Date(Date.now() - RECENT_MS).toISOString();
+  const { data: open } = await db.from("jobs").select("id").eq("type", "screen.recheck").eq("campaign_id", campaignId).in("status", ["pending", "running"]).gte("created_at", since);
+  if (open?.length) return { ok: false, message: "A re-check for this campaign is already running. Wait a few seconds." };
+  const { error } = await db.from("jobs").insert({ type: "screen.recheck", idempotency_key: `screen.recheck:${campaignId}:${Date.now()}`, payload: { campaignId }, campaign_id: campaignId });
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, message: "Re-check started. The result shows here in a minute or so." };
+}
+
+/** The newest re-check per campaign, keyed by campaign id. */
+export async function latestScreenRechecks(): Promise<Record<string, RecheckRow>> {
+  const db = createServiceDb();
+  const { data } = await db.from("jobs").select("status, campaign_id, result, last_error, created_at").eq("type", "screen.recheck").order("created_at", { ascending: false }).limit(60);
+  const out: Record<string, RecheckRow> = {};
+  for (const j of data ?? []) {
+    if (!j.campaign_id || out[j.campaign_id]) continue;
+    const state = j.status === "completed" ? "done" : j.status === "failed" ? "failed" : j.status === "running" ? "running" : "waiting";
+    out[j.campaign_id] = { state, queuedAt: j.created_at, waitingTooLong: state === "waiting" && Date.now() - new Date(j.created_at).getTime() > 20_000, result: j.status === "completed" ? (j.result as unknown as RecheckResult | null) : null, error: j.last_error };
+  }
+  return out;
+}

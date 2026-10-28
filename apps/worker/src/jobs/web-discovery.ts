@@ -14,7 +14,7 @@ import type { Json, Tables } from "@outreach/db";
 import type { JobInfo, WorkerCtx } from "../ctx";
 import { leadEvent, must } from "../pipeline/common";
 import { loadWorkflowConfig, skipLead } from "../pipeline/run-common";
-import { researchIsLive, screenCompanySite } from "../pipeline/stages";
+import { offerOf, researchIsLive, screenCompanySite } from "../pipeline/stages";
 import { makeSpender } from "../spend";
 import { importApolloPeople } from "./apollo-pull";
 import { loadSuppression } from "./import";
@@ -48,6 +48,8 @@ export interface WebFindResult {
   /** companies that had no contact before and got one now (free look-up) */
   revived: number;
   skipped: { excluded: number; known: number; failedCheck: number; noData: number };
+  /** the leads kept in Needs attention because nobody was found (for the run report) */
+  noContactLeadIds: string[];
   /** up to 50 companies with what happened to them */
   companies: WebCompany[];
   note?: string;
@@ -132,7 +134,7 @@ async function recheckNoContact(ctx: WorkerCtx, campaign: Campaign, seniorities:
 export async function discoverFromWeb(ctx: WorkerCtx, campaign: Campaign, batch: { id: string; started_by: string | null }, job: JobInfo, want: number, cfg: WorkflowConfig): Promise<WebFindResult> {
   const icp = icpSchema.parse(campaign.icp ?? {});
   const result: WebFindResult = {
-    queries: [], queriesRun: 0, results: 0, kept: 0, checked: 0, contacts: 0, noContact: 0, revived: 0,
+    queries: [], queriesRun: 0, results: 0, kept: 0, checked: 0, contacts: 0, noContact: 0, revived: 0, noContactLeadIds: [],
     skipped: { excluded: 0, known: 0, failedCheck: 0, noData: 0 }, companies: [], demo: ctx.modes.apollo !== "live",
   };
   const note = (n: string) => (result.note = result.note ? `${result.note}; ${n}` : n);
@@ -151,6 +153,7 @@ export async function discoverFromWeb(ctx: WorkerCtx, campaign: Campaign, batch:
   }
 
   const search = makeSpender(ctx, { campaignId: campaign.id, leadId: null, jobId: job.jobId, step: "webDiscovery" });
+  const offer = await offerOf(ctx, campaign.offer_id);
   const seen = new Set<string>();
   const picks: { person: ApolloPerson; domain: string; name: string; query: string; screen: ScreenResult }[] = [];
 
@@ -192,7 +195,7 @@ export async function discoverFromWeb(ctx: WorkerCtx, campaign: Campaign, batch:
       result.checked++;
       let screen: Awaited<ReturnType<typeof screenCompanySite>>;
       try {
-        screen = await screenCompanySite(ctx, makeSpender(ctx, { campaignId: campaign.id, leadId: null, jobId: job.jobId, step: `webScreen:${c.domain}` }), cfg, { domain: c.domain, name: c.name, market: icp.industries.join(", ") });
+        screen = await screenCompanySite(ctx, makeSpender(ctx, { campaignId: campaign.id, leadId: null, jobId: job.jobId, step: `webScreen:${c.domain}` }), cfg, { domain: c.domain, name: c.name, market: icp.industries.join(", "), offer });
       } catch (e) {
         if (isHardStop(e)) throw e;
         ctx.log(`quick check of ${c.domain} failed: ${(e as Error).message}`);
@@ -239,6 +242,7 @@ export async function discoverFromWeb(ctx: WorkerCtx, campaign: Campaign, batch:
       await leadEvent(ctx.db, lead, "web_discovery", { query, domain: c.domain });
       await skipLead(ctx.db, lead, "no-contact", `${c.name} (${c.domain}), ${screen.result.business_type}. ${why}`.slice(0, 400));
       result.noContact++;
+      result.noContactLeadIds.push(lead.id);
       addCompany({ ...c, query, outcome: "no-contact" });
     }
   }
@@ -284,7 +288,7 @@ export interface WebFindPayload {
 export async function webFindJob(ctx: WorkerCtx, payload: WebFindPayload, job: JobInfo): Promise<WebFindResult> {
   const campaign = must(await ctx.db.from("campaigns").select("*").eq("id", payload.campaignId).is("deleted_at", null).single(), "load campaign");
   const icp = icpSchema.parse(campaign.icp ?? {});
-  const empty = (note: string): WebFindResult => ({ queries: [], queriesRun: 0, results: 0, kept: 0, checked: 0, contacts: 0, noContact: 0, revived: 0, skipped: { excluded: 0, known: 0, failedCheck: 0, noData: 0 }, companies: [], note, demo: ctx.modes.apollo !== "live" });
+  const empty = (note: string): WebFindResult => ({ queries: [], queriesRun: 0, results: 0, kept: 0, checked: 0, contacts: 0, noContact: 0, revived: 0, noContactLeadIds: [], skipped: { excluded: 0, known: 0, failedCheck: 0, noData: 0 }, companies: [], note, demo: ctx.modes.apollo !== "live" });
   if (!sourcesOf(icp).includes("web")) return empty("This campaign does not use Web discovery. Tick it in the campaign on the Setup page.");
   const why = webSkipReason(ctx);
   if (why) return empty(why);

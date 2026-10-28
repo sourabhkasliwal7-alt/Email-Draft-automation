@@ -111,6 +111,12 @@ test.beforeAll(async () => {
   await mkLead("NoMail", { campaign: ids.csv, status: "disqualified", reason_codes: ["no-email", "no email in the CSV and no Apollo id to reveal one"], email: null });
   await mkLead("SkipMe", { campaign: ids.csv, status: "approved", next_action: "reveal", reason_codes: ["step-failed", "reveal: ZeroBounce validate failed"] });
 
+  // quick-check results and the run report: a lead the quick check turned down (it can be checked again), and the real run's lead list
+  await mkLead("ScreenNo", { campaign: ids.apollo, status: "disqualified", reason_codes: ["screen-failed", "looks like a restaurant"] });
+  await admin.from("campaign_leads").update({ score_components: { screen: { fit: "no", business_type: "restaurant", reason: "serves food, not software", mode: "mock" } } }).eq("id", leads.ScreenNo!);
+  await admin.from("campaign_leads").update({ score_components: { screen: { fit: "uncertain", business_type: "software agency", reason: "thin homepage", mode: "mock" } } }).eq("id", leads.Ready!);
+  await admin.from("pipeline_batches").update({ totals: { target: 20, dryRun: false, log: [{ at: new Date().toISOString(), step: "done", count: 5 }], funnel: { found: 12, checked: 10, researched: 8, approved: 6, drafted: 5 }, summary: { leads: 12, drafts: 5, dryRun: false, needsAttention: 1, quality: { firstTry: 3, afterRewrite: 2, failed: 1 } }, leadIds: [leads.Ready!], reportExtraIds: [leads.ScreenNo!], approveCutoff: 55 } }).eq("id", ids.runReal);
+
   // Web discovery: one company with a person found, one without (parked under Needs attention), and a finished Google search
   await mkLead("WebFound", { campaign: ids.web, status: "researching", source: "web_discovery", detail: "saas agency hiring react" });
   await mkLead("WebNone", { campaign: ids.web, status: "disqualified", reason_codes: ["no-contact", "WebNone: a software agency (webnone.example.com)"], source: "web_discovery", detail: "saas agency pune", noPerson: true, email: null });
@@ -532,4 +538,54 @@ test("Setup is one page with seven numbered tabs, one section visible at a time"
     return clone.innerText;
   });
   expect(outside).not.toMatch(/\b(ledger|stage A|stage B|ADAPTER_)/i);
+});
+
+test("Run report: a download link on the run page and on Home, and the CSV has every lead including the skipped one", async ({ page }) => {
+  await loginAs(page, "operator");
+  await page.goto(`/runs/${ids.runReal}`);
+  const link = page.getByTestId("download-report");
+  await expect(link).toHaveText("Download run report (CSV)");
+  await expect(link).toHaveAttribute("href", `/runs/${ids.runReal}/report`);
+  // the run page lists its leads with the quick-check result
+  const rows = page.getByTestId("run-lead-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.filter({ hasText: `ScreenNo ${E}` }).getByTestId("run-lead-quick-check")).toContainText("restaurant");
+  await expect(rows.filter({ hasText: `Ready ${E}` }).getByTestId("run-lead-quick-check")).toContainText("Maybe");
+
+  await page.goto("/");
+  await expect(page.getByTestId("last-run").getByTestId("download-report")).toHaveAttribute("href", `/runs/${ids.runReal}/report`);
+
+  const res = await page.request.get(`/runs/${ids.runReal}/report`);
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("text/csv");
+  expect(res.headers()["content-disposition"]).toContain("run-report-");
+  const body = await res.body();
+  expect([...body.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  const text = body.toString("utf8");
+  expect(text).toContain(`Ready ${E}`);
+  expect(text).toContain(`ScreenNo ${E}`);
+  expect(text).toContain("restaurant");
+  expect(text).toContain("White-label");
+  expect((await page.request.get("/runs/00000000-0000-4000-8000-0000000000ff/report")).status()).toBe(404);
+});
+
+test("Leads: every lead shows its quick check, and skipped leads can be checked again", async ({ page }) => {
+  await loginAs(page, "operator");
+  await page.goto("/leads");
+  const no = page.getByTestId("lead-row").filter({ hasText: `ScreenNo ${E}` });
+  await expect(no.getByTestId("lead-quick-check")).toContainText("No");
+  await expect(no.getByTestId("lead-quick-check")).toContainText("restaurant");
+  await expect(no.getByTestId("lead-quick-check")).toContainText("serves food, not software");
+  await expect(page.getByTestId("lead-row").filter({ hasText: `Ready ${E}` }).getByTestId("lead-quick-check")).toContainText("Maybe");
+  await expect(page.getByTestId("lead-row").filter({ hasText: `Found ${E}` }).getByTestId("lead-quick-check")).toHaveText("-");
+
+  await expect(page.getByTestId("recheck-help")).toContainText("Nothing else is repeated");
+  const section = page.getByTestId(`recheck-${ids.apollo}`);
+  await expect(section.getByTestId("recheck-skipped")).toHaveText("Re-check 1 skipped lead");
+  await section.getByTestId("recheck-skipped").click();
+  await expect(page.getByTestId("form-message").first()).toBeVisible();
+  const { data: queued } = await adminClient().from("jobs").select("id, payload").eq("type", "screen.recheck").eq("campaign_id", ids.apollo);
+  expect(queued?.length).toBeGreaterThanOrEqual(1);
+  expect(queued![0]!.payload).toMatchObject({ campaignId: ids.apollo });
+  // seeded campaigns are named "itest ...": a worker never takes this job, so nothing is checked or paid for
 });

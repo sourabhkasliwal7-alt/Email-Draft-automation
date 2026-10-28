@@ -6,8 +6,8 @@ import { ATTENTION_REASONS, type SkipReason } from "@outreach/core";
 
 /** Why a lead was skipped or needs a person, in words anyone understands. */
 export const PLAIN_REASON: Record<SkipReason, string> = {
-  "screen-failed": "Does not look like a good fit for your offer",
-  "no-data": "We could not read their website",
+  "screen-failed": "The quick check said it does not look like a good fit for your offer. Wrong? Use Re-check skipped leads on the Leads page",
+  "no-data": "We could not read their website. Use Re-check skipped leads on the Leads page to try again",
   "no-verified-fact": "We found nothing about them that we could check word for word",
   "below-threshold": "Score too low to write to",
   "over-quota": "A good lead, but today's limit was already used",
@@ -98,7 +98,7 @@ export const PLAIN_STEP: Record<string, string> = {
   search: "finding people and companies",
   "web search": "finding companies on Google",
   clean: "removing people we should not write to",
-  "quick check": "the quick check",
+  "quick check": "the quick check (does the business fit your offer, yes, maybe or no; only a clear no is skipped)",
   "research and score": "research and scoring",
   approve: "choosing the best leads",
   "approve (dry run)": "choosing the best leads (test)",

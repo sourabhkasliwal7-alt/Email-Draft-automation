@@ -54,7 +54,7 @@ export function createAdapters(env: Record<string, string | undefined> = process
           ? createOpenRouterLlm({ apiKey: need("OPENROUTER_API_KEY"), siteUrl: envValue(env, "NEXT_PUBLIC_SITE_URL") })
           : createLiveLlm({ apiKey: need("ANTHROPIC_API_KEY") }),
     search: modes.search === "live" ? createLiveSearch({ apiKey: need("SERPER_API_KEY") }) : mock.search,
-    fetcher: modes.fetcher === "live" ? createLiveFetcher() : mock.fetcher,
+    fetcher: modes.fetcher === "live" ? createLiveFetcher({ reader: { enabled: envValue(env, "FETCHER_READER")?.toLowerCase() !== "off", apiKey: envValue(env, "JINA_API_KEY") } }) : mock.fetcher,
     crunchbase: modes.crunchbase === "live" ? notImplementedLive<CrunchbaseAdapter>("crunchbase") : mock.crunchbase,
     apollo: modes.apollo === "live" ? createLiveApollo({ apiKey: need("APOLLO_API_KEY") }) : mock.apollo,
     verifier: modes.verifier === "live" ? createLiveVerifier({ apiKey: need("VERIFIER_API_KEY") }) : mock.verifier,

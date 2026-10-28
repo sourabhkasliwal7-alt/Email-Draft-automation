@@ -1,4 +1,4 @@
-import { ExternalLink, Rocket } from "lucide-react";
+import { Download, ExternalLink, Rocket } from "lucide-react";
 import { notFound } from "next/navigation";
 import { can, formatKolkata } from "@outreach/core";
 import { ActionForm } from "@/components/action-form";
@@ -12,7 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PLAIN_PAUSE, gmailDraftUrl, plainReason, plainStep } from "@/lib/plain";
+import { PLAIN_PAUSE, gmailDraftUrl, plainLeadStatus, plainReason, plainStep } from "@/lib/plain";
+import { quickCheckOf } from "@/lib/quick-check";
+import { loadRunLeadLines } from "@/lib/run-report";
 import { cancelRunAction, resumeRunAction } from "../actions";
 
 interface Totals {
@@ -70,6 +72,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
   // gmail_message_id is newer than the generated types
   const drafts = (draftRows ?? []) as unknown as ((typeof draftRows extends (infer R)[] | null ? R : never) & { gmail_message_id?: string | null })[];
   const t = (run.totals ?? {}) as Totals;
+  const { total: leadTotal, lines: leadLines } = await loadRunLeadLines(supabase, run.totals, 100);
   const s = t.summary;
   const detail = (run.pause_detail ?? {}) as { problems?: string[]; error?: string };
   const test = (run.estimate as { dryRun?: boolean } | null)?.dryRun === true || (t as { dryRun?: boolean }).dryRun === true || s?.dryRun === true;
@@ -87,7 +90,11 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
         title={`Run: ${run.campaigns?.name ?? ""}`}
         description={`Started ${formatKolkata(run.started_at)} (IST)${run.finished_at ? `, finished ${formatKolkata(run.finished_at)}` : ""}`}
         actions={
-          manage && run.status === "paused" ? (
+          <>
+            <LinkButton href={`/runs/${run.id}/report`} variant="outline" icon={<Download aria-hidden />} plain data-testid="download-report">
+              Download run report (CSV)
+            </LinkButton>
+            {manage && run.status === "paused" ? (
             <>
               <ActionForm action={resumeRunAction} success="The run is going again.">
                 <input type="hidden" name="id" value={run.id} />
@@ -109,7 +116,8 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
                 Cancel run
               </ConfirmButton>
             </ActionForm>
-          ) : undefined
+          ) : undefined}
+          </>
         }
       />
 
@@ -150,6 +158,62 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
             Email quality: {quality.firstTry ?? 0} of {qualityTotal} passed first time, {quality.afterRewrite ?? 0} after one rewrite, {quality.failed ?? 0} need attention.
           </p>
         )}
+
+        <Card data-testid="run-leads">
+          <CardHeader>
+            <div>
+              <CardTitle>Leads in this run</CardTitle>
+              <CardDescription>
+                What the quick check said about each lead, and where it ended. The run report (CSV) has every lead with all the details{leadTotal > leadLines.length ? `; this list shows the first ${leadLines.length} of ${leadTotal}` : ""}.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardBody>
+            {!leadLines.length ? (
+              <EmptyState>No leads were worked on in this run.</EmptyState>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="w-full min-w-[44rem] text-sm">
+                  <thead className="bg-muted/60 text-left text-xs tracking-wide text-muted-foreground uppercase">
+                    <tr>
+                      <th className="px-4 py-2.5">Lead</th>
+                      <th className="px-4 py-2.5">Quick check</th>
+                      <th className="px-4 py-2.5">Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {leadLines.map((l) => {
+                      const qc = quickCheckOf({ screen: { fit: l.fit ?? undefined, business_type: l.businessType ?? undefined, reason: l.reason ?? undefined } });
+                      const st = plainLeadStatus({ status: l.status, reason_codes: l.reasonCodes });
+                      return (
+                        <tr key={l.id} className="align-top" data-testid="run-lead-row">
+                          <td className="px-4 py-2">
+                            <div className="font-medium">{l.name || "No person yet"}</div>
+                            <div className="text-xs text-muted-foreground">{l.company}</div>
+                          </td>
+                          <td className="max-w-80 px-4 py-2" data-testid="run-lead-quick-check">
+                            {qc ? (
+                              <div className="space-y-0.5">
+                                <Badge tone={qc.tone}>{qc.label}</Badge>
+                                {qc.businessType && <span className="ml-2 text-xs font-medium">{qc.businessType}</span>}
+                                {qc.reason && <div className="text-xs break-words text-muted-foreground">{qc.reason}</div>}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
+                            <Badge tone={st.tone}>{st.label}</Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardBody>
+        </Card>
 
         <Card>
           <CardHeader>

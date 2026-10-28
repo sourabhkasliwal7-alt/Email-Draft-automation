@@ -82,6 +82,13 @@ const TRIGGER_ORDER: TriggerType[] = ["none", "tech-change", "public-talk", "awa
 const triggerRank = (f: Fact) => TRIGGER_ORDER.indexOf(f.trigger) * 1000 + (f.date ? new Date(f.date).getTime() / DAY / 1000 : 0);
 
 // ---------------------------------------------------------------- Stage A (C1): does the homepage open, and does the business fit?
+/** The offer a campaign sells: the quick check judges a company against it as well as against the industry list. */
+export async function offerOf(ctx: WorkerCtx, offerId: string | null): Promise<{ name: string; description: string | null } | null> {
+  if (!offerId) return null;
+  const { data } = await ctx.db.from("offers").select("name, description").eq("id", offerId).maybeSingle();
+  return data ?? null;
+}
+
 type ScreenResult = ReturnType<typeof screenSchema.parse>;
 export type SiteScreen = { ok: true; result: ScreenResult } | { ok: false; reason: "no-data" | "screen-failed"; detail: string };
 
@@ -89,7 +96,7 @@ export type SiteScreen = { ok: true; result: ScreenResult } | { ok: false; reaso
  * The quick check of one company website: open the homepage, ask the cheap model whether the business fits. It needs no lead, so
  * web discovery can run it on a company before any person is stored. Nothing is saved here.
  */
-export async function screenCompanySite(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, company: { domain: string; name: string; market: string }): Promise<SiteScreen> {
+export async function screenCompanySite(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, company: { domain: string; name: string; market: string; offer?: { name: string; description?: string | null } | null }): Promise<SiteScreen> {
   let page;
   try {
     page = await ctx.adapters.fetcher.fetchPage(`https://${company.domain}/`);
@@ -99,7 +106,7 @@ export async function screenCompanySite(ctx: WorkerCtx, paid: Paid, cfg: Workflo
   }
   if (page.status !== 200 || !page.text.trim()) return { ok: false, reason: "no-data", detail: `homepage did not open (${page.status})` };
 
-  const { system, prompt } = buildScreenPrompt({ name: company.name, domain: company.domain }, company.market, page.text);
+  const { system, prompt } = buildScreenPrompt({ name: company.name, domain: company.domain }, company.market, page.text, company.offer);
   let result: ScreenResult | null = null;
   for (let attempt = 0; attempt < 2 && !result; attempt++) {
     const res = await paid("llm", "screen", () => ctx.adapters.llm.complete({ tier: "cheap", model: cfg.model_screen, system, prompt, maxTokens: 200 }));
@@ -122,7 +129,7 @@ export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig
   }
 
   const market = (lead.campaigns?.icp as { industries?: string[] } | undefined)?.industries?.join(", ") ?? "";
-  const screen = await screenCompanySite(ctx, paid, cfg, { domain: company.domain, name: company.name ?? company.domain, market });
+  const screen = await screenCompanySite(ctx, paid, cfg, { domain: company.domain, name: company.name ?? company.domain, market, offer: await offerOf(ctx, lead.campaigns?.offer_id ?? null) });
   if (!screen.ok) return skipLead(ctx.db, lead, screen.reason, screen.detail) as Promise<Skipped>;
   const result = screen.result;
 
@@ -177,10 +184,14 @@ export async function researchLead(
 
   const { system, prompt } = buildFactsPrompt({ name, domain: company.domain }, pages);
   let raw: RawFact[] | null = null;
+  let hiringRoles: string[] = [];
   for (let attempt = 0; attempt < 2 && !raw; attempt++) {
     const res = await paid("llm", "facts", () => ctx.adapters.llm.complete({ tier: "cheap", model: cfg.model_extract, system, prompt, maxTokens: 1500 }));
     const parsed = factsSchema.safeParse(parseJsonLoose(res.text));
-    if (parsed.success) raw = parsed.data.facts;
+    if (parsed.success) {
+      raw = parsed.data.facts;
+      hiringRoles = parsed.data.developer_roles_open;
+    }
   }
   if (!raw) return skipLead(ctx.db, lead, "extraction-suspect", "the fact extraction returned unreadable output twice") as Promise<Skipped>;
 
@@ -194,6 +205,9 @@ export async function researchLead(
     .filter((f) => (f.type === "hiring" ? isOwnHost(f.source_url, company.domain) : true))
     .filter((f) => !f.date || now.getTime() - new Date(f.date).getTime() <= (f.type === "hiring" ? STALE_DAYS.hiring : STALE_DAYS.other) * DAY);
 
+  // what the run report shows for this lead: the pages read, the roles found and how many facts passed the exact-quote check
+  const research = { pages_visited: pages.map((p) => p.url), hiring_roles: hiringRoles, facts_check: { given: raw.length, kept: check.kept.length } };
+  must(await ctx.db.from("campaign_leads").update({ score_components: { ...((lead.score_components as object) ?? {}), research } as unknown as Json }).eq("id", lead.id), "save research details");
   await leadEvent(ctx.db, lead, "facts_checked", { given: raw.length, kept: kept.length, failed: check.failed.map((f) => f.reason), failRate: Number(check.failRate.toFixed(2)) });
   if (check.failRate > 0.4 && raw.length > 0) return skipLead(ctx.db, lead, "extraction-suspect", `${Math.round(check.failRate * 100)}% of the facts failed the quote check`) as Promise<Skipped>;
   if (!kept.length) return skipLead(ctx.db, lead, "no-verified-fact", raw.length ? "no fact survived the checks" : "nothing found") as Promise<Skipped>;

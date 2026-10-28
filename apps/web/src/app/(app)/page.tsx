@@ -1,4 +1,4 @@
-import { Check, FileText, Mail, PauseCircle, Rocket, Sparkles, TriangleAlert } from "lucide-react";
+import { Check, Download, FileText, Mail, PauseCircle, Rocket, Sparkles, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { ATTENTION_REASONS, can, formatKolkata, sourcesOf, type SkipReason } from "@outreach/core";
 import { GMAIL_MODIFY_SCOPE } from "@outreach/adapters";
@@ -349,6 +349,11 @@ export default async function HomePage() {
           )}
         </CardBody>
         <CardFooter>
+          {last && viewRuns && (
+            <LinkButton href={`/runs/${last.id}/report`} variant="outline" icon={<Download aria-hidden />} plain data-testid="download-report">
+              Download run report (CSV)
+            </LinkButton>
+          )}
           {draftsLink && (
             <LinkButton href={draftsLink} variant="outline" icon={<Mail aria-hidden />} external data-testid="open-gmail-drafts">
               Open Gmail drafts

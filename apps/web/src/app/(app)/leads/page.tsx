@@ -7,12 +7,13 @@ import { LinkButton } from "@/components/link-button";
 import { Badge, EmptyState, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { isTestActive, latestApolloFinds, latestWebFinds, type FindRow, type WebFindCompany, type WebFindRow } from "@/lib/adapter-tests";
+import { isTestActive, latestApolloFinds, latestScreenRechecks, latestWebFinds, type FindRow, type RecheckRow, type WebFindCompany, type WebFindRow } from "@/lib/adapter-tests";
 import { requireUser } from "@/lib/auth";
 import { gmailDraftUrl, plainLeadStatus } from "@/lib/plain";
+import { RECHECK_REASONS, quickCheckOf, recheckCounts, recheckLine } from "@/lib/quick-check";
 import { createClient } from "@/lib/supabase/server";
 import { UploadForm } from "../import/forms";
-import { FindApolloForm, FindWebForm } from "./forms";
+import { FindApolloForm, FindWebForm, RecheckForm } from "./forms";
 
 function findLine(row: FindRow | undefined): { text: string; tone: "ok" | "wait" | "error" } | null {
   if (!row) return null;
@@ -48,20 +49,26 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const { campaign: campaignFilter } = await searchParams;
   const supabase = await createClient();
   const canAdd = can(user.role, "import.use");
+  const canRecheck = can(user.role, "workflow.start");
 
   let query = supabase
     .from("campaign_leads")
-    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, lead_source, source_detail, campaigns(name), contacts(full_name, job_title, email, company_name, companies(name, domain))")
+    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, lead_source, source_detail, score_components, campaigns(name), contacts(full_name, job_title, email, company_name, companies(name, domain))")
     .order("created_at", { ascending: false })
     .limit(200);
   if (campaignFilter) query = query.eq("campaign_id", campaignFilter);
-  const [{ data: leads }, { data: campaigns }, { data: uploads }, finds, webFinds] = await Promise.all([
+  const [{ data: leads }, { data: campaigns }, { data: uploads }, finds, webFinds, rechecks, { data: skippedRows }] = await Promise.all([
     query,
     supabase.from("campaigns").select("id, name, icp").is("deleted_at", null).order("name"),
     canAdd ? supabase.from("import_batches").select("id, file_name, status, dry_run, totals, created_at, campaigns(name)").order("created_at", { ascending: false }).limit(5) : Promise.resolve({ data: [] }),
     canAdd ? latestApolloFinds() : Promise.resolve({} as Record<string, FindRow>),
     canAdd ? latestWebFinds() : Promise.resolve({} as Record<string, WebFindRow>),
+    canRecheck ? latestScreenRechecks() : Promise.resolve({} as Record<string, RecheckRow>),
+    // every lead a second quick check could help, in all campaigns (not only the 200 shown below)
+    canRecheck ? supabase.from("campaign_leads").select("campaign_id, status, reason_codes").eq("status", "disqualified").overlaps("reason_codes", [...RECHECK_REASONS]).limit(5000) : Promise.resolve({ data: [] as { campaign_id: string; status: string; reason_codes: string[] }[] }),
   ]);
+  const recheckable = recheckCounts(skippedRows ?? []);
+  const recheckCampaigns = (campaigns ?? []).filter((c) => (recheckable[c.id] ?? 0) > 0 || rechecks[c.id]);
   const campaignList = campaigns ?? [];
   const usesSource = (c: { icp: unknown }, s: "apollo" | "web") => sourcesOf(c.icp as { leadSources?: string[]; leadSource?: string } | null).includes(s);
   const apolloCampaigns = campaignList.filter((c) => usesSource(c, "apollo"));
@@ -90,7 +97,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           </LinkButton>
         }
       />
-      <AutoRefresh active={Object.values(finds).some(isTestActive) || Object.values(webFinds).some(isTestActive)} />
+      <AutoRefresh active={Object.values(finds).some(isTestActive) || Object.values(webFinds).some(isTestActive) || Object.values(rechecks).some(isTestActive)} />
 
       <div className="space-y-8">
         {canAdd && (
@@ -222,6 +229,35 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           </div>
         )}
 
+        {canRecheck && recheckCampaigns.length > 0 && (
+          <Card className="space-y-3 p-5 sm:p-6" data-testid="recheck-section">
+            <div>
+              <h2 className="text-lg font-semibold">Skipped at the quick check</h2>
+              <p className="mt-0.5 text-sm text-muted-foreground" data-testid="recheck-help">
+                Runs only the quick check again for leads that were skipped as not a good fit or because the website could not be read. Nothing else is repeated; leads that pass wait for the next Start run.
+              </p>
+            </div>
+            <ul className="space-y-3">
+              {recheckCampaigns.map((c) => {
+                const row = rechecks[c.id];
+                const active = isTestActive(row);
+                const line = !row ? null : active ? (row.waitingTooLong ? "Waiting for the background worker. Is it running? (pnpm dev starts it.)" : "Checking the skipped leads…") : row.state === "failed" || !row.result ? `The re-check failed: ${row.error ?? "no answer from the background worker"}` : recheckLine(row.result);
+                return (
+                  <li key={c.id} className="space-y-1.5" data-testid={`recheck-${c.id}`}>
+                    <div className="text-sm font-medium">{c.name}</div>
+                    {(recheckable[c.id] ?? 0) > 0 ? <RecheckForm campaignId={c.id} count={recheckable[c.id]!} /> : <p className="text-sm text-muted-foreground">No skipped leads left to re-check.</p>}
+                    {line && (
+                      <p data-testid={`recheck-result-${c.id}`} className={`text-sm ${row?.state === "failed" ? "font-medium text-red-700" : row?.state === "done" ? "text-emerald-800" : "text-muted-foreground"}`}>
+                        {line}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        )}
+
         <section data-testid="lead-list" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <h2 className="text-lg font-semibold">Your leads</h2>
@@ -247,7 +283,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           ) : (
             <Card className="overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[56rem] text-sm">
+                <table className="w-full min-w-[64rem] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                       <th scope="col" className="px-5 py-3">Person</th>
@@ -255,6 +291,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       <th scope="col" className="px-3 py-3">Campaign</th>
                       <th scope="col" className="px-3 py-3">Source</th>
                       <th scope="col" className="px-3 py-3">Found by</th>
+                      <th scope="col" className="px-3 py-3">Quick check</th>
                       <th scope="col" className="px-3 py-3">Where it stands</th>
                       <th scope="col" className="px-5 py-3 text-right">Added (IST)</th>
                     </tr>
@@ -262,6 +299,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   <tbody className="divide-y">
                     {leads.map((l) => {
                       const st = plainLeadStatus(l);
+                      const qc = quickCheckOf(l.score_components);
                       const d = draftOf.get(l.id);
                       const company = l.contacts?.companies?.name ?? l.contacts?.company_name ?? l.contacts?.companies?.domain ?? null;
                       return (
@@ -279,6 +317,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                           <td className="px-3 py-3">{l.campaigns?.name}</td>
                           <td className="px-3 py-3 whitespace-nowrap" data-testid="lead-source">{leadSourceLabel(l.lead_source)}</td>
                           <td className="max-w-56 px-3 py-3 text-xs break-words text-muted-foreground" data-testid="lead-found-by">{l.lead_source === "web_discovery" && l.source_detail ? l.source_detail : "-"}</td>
+                          <td className="max-w-64 px-3 py-3" data-testid="lead-quick-check">
+                            {qc ? (
+                              <div className="space-y-0.5">
+                                <Badge tone={qc.tone}>{qc.label}</Badge>
+                                {qc.businessType && <div className="text-xs font-medium">{qc.businessType}</div>}
+                                {qc.reason && <div className="text-xs break-words text-muted-foreground">{qc.reason}</div>}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
                           <td className="px-3 py-3" data-testid="lead-status">
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge tone={st.tone}>{st.label}</Badge>

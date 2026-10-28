@@ -111,8 +111,10 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
   const skippedBy: Record<string, number> = {};
   const seenCompanies = new Set<string>();
   let resumed = 0;
+  const skippedIds: string[] = [];
   const skip = async (l: { id: string; contact_id: string }, reason: SkipReason, detail?: string) => {
     await skipLead(ctx.db, l, reason, detail);
+    skippedIds.push(l.id);
     skippedBy[reason] = (skippedBy[reason] ?? 0) + 1;
   };
   const excludedDomains = cfg.excluded_domains.map((d) => d.toLowerCase().replace(/^www\./, ""));
@@ -140,7 +142,7 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
     if (c.company_id) seenCompanies.add(c.company_id);
     picked.push(l.id);
   }
-  return { picked, skippedBy, resumed, redone, openBefore: open.length };
+  return { picked, skippedBy, skippedIds, resumed, redone, openBefore: open.length };
 }
 
 /**
@@ -267,6 +269,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       const have = sources.includes("csv") ? await countOpenLeads(ctx, campaign.id) : 0;
       let missing = Math.max(0, want - have);
       let webNoContact = 0;
+      let webNoContactIds: string[] = [];
       if (sources.includes("apollo")) {
         // with web discovery as well, Apollo fills half of what is missing and the web fills the rest
         const wantFromApollo = sources.includes("web") ? Math.ceil(missing / 2) : missing;
@@ -291,6 +294,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           try {
             const web = await discoverFromWeb(ctx, campaign, { id: batch.id, started_by: batch.started_by }, job, missing, cfg);
             webNoContact = web.noContact;
+            webNoContactIds = web.noContactLeadIds;
             const parts = [`${web.queriesRun} search(es), ${web.results} results`, `${web.kept} new company sites`, `${web.checked} checked`, `${web.contacts} with a person to write to`, ...(web.noContact ? [`${web.noContact} with no contact found (in Needs attention)`] : []), ...(web.revived ? [`${web.revived} contact(s) found for companies from earlier runs`] : [])];
             await patchTotals(db, batch.id, { web: { ...web, companies: undefined } }, { step: "web search", count: web.contacts, note: web.note ?? parts.join(", ") });
           } catch (e) {
@@ -300,13 +304,13 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           }
         }
       }
-      const { picked, skippedBy, resumed, redone } = await cleanAndSelect(ctx, campaign, cfg, want);
+      const { picked, skippedBy, skippedIds, resumed, redone } = await cleanAndSelect(ctx, campaign, cfg, want);
       // companies found on the web with nobody to write to are already parked in Needs attention: they count as found and as skipped
       if (webNoContact) skippedBy["no-contact"] = (skippedBy["no-contact"] ?? 0) + webNoContact;
       funnel.found = picked.length + Object.values(skippedBy).reduce((a, n) => a + n, 0);
       funnel.checked = picked.length;
       const cleanNote = [redone ? `${redone} lead(s) had demo research from mock adapters and were started again with the real ones` : "", resumed ? `${resumed} approved lead(s) continued from an earlier run` : "", Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""].filter(Boolean).join("; ");
-      await patchTotals(db, batch.id, { leadIds: picked, cleanSkipped: skippedBy, funnel, fanout_done: true }, { step: "clean", count: picked.length, note: cleanNote || undefined });
+      await patchTotals(db, batch.id, { leadIds: picked, cleanSkipped: skippedBy, reportExtraIds: [...skippedIds, ...webNoContactIds].slice(0, 2000), funnel, fanout_done: true }, { step: "clean", count: picked.length, note: cleanNote || undefined });
       await db.from("pipeline_batches").update({ fanout_done: true }).eq("id", batch.id);
       batch = await reload();
     }
@@ -358,7 +362,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
     const ranked = approveTop(scored.map((l) => ({ id: l.id, score: l.lead_score ?? 0 })), cfg.approve_threshold, Math.max(0, target - alreadyApproved));
     if (dryRun) {
       funnel.approved = alreadyApproved + ranked.approved.length;
-      await patchTotals(db, batch.id, { wouldApprove: ranked.approved.map((a) => a.id), funnel }, { step: "approve (dry run)", count: ranked.approved.length, note: "leads left as scored; nothing was spent on credits" });
+      await patchTotals(db, batch.id, { wouldApprove: ranked.approved.map((a) => a.id), approveCutoff: cfg.approve_threshold, funnel }, { step: "approve (dry run)", count: ranked.approved.length, note: "leads left as scored; nothing was spent on credits" });
     } else if (!stop) {
       for (const a of ranked.approved) {
         const lead = leads.find((l) => l.id === a.id)!;
@@ -368,7 +372,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       for (const b of ranked.below) await skipLead(db, leads.find((l) => l.id === b.id)!, "below-threshold", `score ${b.score}`);
       for (const o of ranked.overQuota) await skipLead(db, leads.find((l) => l.id === o.id)!, "over-quota", `score ${o.score}`);
       funnel.approved = alreadyApproved + ranked.approved.length;
-      await patchTotals(db, batch.id, { funnel }, { step: "approve", count: ranked.approved.length, note: `cut-off ${cfg.approve_threshold}, today's number ${target}; ${ranked.below.length} below the cut-off, ${ranked.overQuota.length} over the number` });
+      await patchTotals(db, batch.id, { funnel, approveCutoff: cfg.approve_threshold }, { step: "approve", count: ranked.approved.length, note: `cut-off ${cfg.approve_threshold}, today's number ${target}; ${ranked.below.length} below the cut-off, ${ranked.overQuota.length} over the number` });
     }
 
     if (!dryRun && !stop) {

@@ -27,6 +27,8 @@ Home shows a **Getting started** checklist until all of this is done.
 - **Find leads with Apollo**: choose a campaign that uses Apollo and press **Find leads now**. It only finds people; it does not write to anyone or use email credits.
 - **Find companies on Google** (web discovery): choose a campaign that uses Web discovery and press **Preview companies**. It searches Google (Serper) with the campaign's search queries (typed in the campaign, or built from its target, for example "fintech agency India", "fintech agency hiring react"), keeps only company websites (no directories, job boards, social, news or big platforms; LinkedIn and Crunchbase are never used), skips any website that is already in your leads or on the do-not-contact list, runs the quick check on each new company, and looks up the person to write to with a free Apollo search by company website. A company that fits but has nobody to write to appears in **Drafts > Needs attention** as *No contact found* (no email is ever guessed). Start run does the same automatically for campaigns that use Web discovery; each lead shows its source and the search that found it.
 
+- **Re-check skipped leads** (button on the Leads page): runs only the quick check again for leads that were skipped as "not a good fit" or "could not read website". Leads that now pass wait for the next Start run.
+
 ### 3. Start a run (Home page)
 
 - First press **Start test run (no drafts)** (tick *Test run*): it checks and scores your leads without writing drafts or using Apollo credits. Every run is marked **TEST** or **REAL**.
@@ -36,6 +38,7 @@ Home shows a **Getting started** checklist until all of this is done.
 ### 4. Read the drafts (Drafts page)
 
 - **Drafts**: every draft created, with **Open in Gmail**. Each draft starts with a bracketed `[AI note ...]` line: delete it before sending. Nothing is ever sent for you.
+- **Run report**: every run page (and Home, under the last run) has **Download run report (CSV)**: one row per lead of that run, skipped leads included, with the quick-check result, research, score, skip reason, the full draft and its Gmail link, and the cost. It opens in Excel.
 - **Needs attention**: leads the app could not finish, with the reason in plain words. **Retry** puts the lead back at the step that failed (nothing already paid for is repeated). **Skip** removes it.
 
 ### Good to know

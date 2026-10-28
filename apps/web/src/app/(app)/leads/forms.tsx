@@ -1,7 +1,7 @@
 "use client";
 
 import { Field, FormMessage, SubmitButton, inputClass, useActionForm } from "@/components/form";
-import { findApolloLeads, findWebCompanies } from "./actions";
+import { findApolloLeads, findWebCompanies, recheckSkippedLeads } from "./actions";
 
 export function FindApolloForm({ campaigns }: { campaigns: { id: string; name: string }[] }) {
   const { state, onSubmit, pending } = useActionForm(findApolloLeads);
@@ -36,6 +36,20 @@ export function FindWebForm({ campaigns }: { campaigns: { id: string; name: stri
       </Field>
       <FormMessage state={state} />
       <SubmitButton variant="outline" pending={pending} testId="find-web">Preview companies</SubmitButton>
+    </form>
+  );
+}
+
+/** One button for one campaign: runs the quick check again for its skipped leads. */
+export function RecheckForm({ campaignId, count }: { campaignId: string; count: number }) {
+  const { state, onSubmit, pending } = useActionForm(recheckSkippedLeads);
+  return (
+    <form onSubmit={onSubmit} noValidate data-testid={`recheck-form-${campaignId}`} className="flex flex-wrap items-center gap-3">
+      <input type="hidden" name="campaignId" value={campaignId} />
+      <SubmitButton variant="outline" size="sm" pending={pending} testId="recheck-skipped">
+        Re-check {count} skipped {count === 1 ? "lead" : "leads"}
+      </SubmitButton>
+      <FormMessage state={state} />
     </form>
   );
 }

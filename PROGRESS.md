@@ -9,8 +9,19 @@
 | CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
 | LIVE-1 | CSV runs, Gmail connection, live Claude/Serper/ZeroBounce/fetcher | built; adapters stay on mock until you switch them | 2026-10-27 |
 | LIVE-2 | Simple 4-page UI, Apollo as a main lead source, retry, email quality, gmail.modify label | built; Apollo needs your key | 2026-10-28 |
+| LIVE-4 | Quick check judges target + offer, Jina Reader fallback, Re-check skipped leads, run report CSV | built and tested on mock adapters | 2026-10-28 |
 | LIVE-3 | Web discovery (Google) as a third lead source | built and tested on mock adapters; needs your Serper key and Apollo for contacts | 2026-10-28 |
 | 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## LIVE-4 - quick check fixes, re-check button, run report (2026-10-28)
+
+**Why leads were skipped.** A real CSV run skipped 18 of 24 relevant software companies as "not a good fit" and 5 as "could not read website". The quick check only ever skipped a clear "no" (an "uncertain" always continued), but its prompt judged the homepage against the industry list alone, so agencies and tech companies outside the list came back "no".
+- Quick check prompt (`buildScreenPrompt`) now judges against BOTH the campaign's target industries AND the offer (name + description; default: white-label web and app development for agencies and for tech/software companies that need extra developers). "yes" for software/web/app/tech/digital businesses and agencies; "uncertain" when unsure ("when in doubt, never no"); "no" only for a clearly unrelated business. Web discovery uses the same prompt.
+- Unreadable websites: the live page fetcher now falls back to Jina Reader (`r.jina.ai/<url>`) when its own fetch cannot read a page (a connection error, or a page with almost no text such as a script-only shell). The fallback is never used after robots.txt said no, a login, paywall, CAPTCHA, 4xx answer or a local address (no block is worked around). Our own fetch + HTML-to-text stays the first try because it checks robots.txt itself. `JINA_API_KEY` (optional) and `FETCHER_READER=off` in `.env.example`.
+- Quick-check result per lead (yes / maybe / no, business type, reason) on the Leads page and the run page.
+- **Re-check skipped leads** (Leads page): new job `screen.recheck` runs the quick check again only for the campaign's leads skipped as screen-failed or no-data (do-not-contact checked first). Leads that pass wait at the research step for the next Start run. Nothing else is repeated.
+- **Run report (CSV)**: `/runs/<id>/report`, a button on every run page and on Home under the last run, for any run (old ones too). One row per lead of the run including skipped ones (`core/run-report.ts`: 42 columns, UTF-8 with BOM, formula-injection protection, multi-line drafts quoted). To fill it the run now saves per lead the pages visited, hiring roles found and the quote-check counts (`score_components.research`), and per run the cut-off used, the ids of leads skipped before the work list and web leads without a contact (`pipeline_batches.totals`). Runs made before this have fewer details in those columns.
+- Tests: core `run-report.test.ts`; adapters `fetcher-reader.test.ts`; worker `quickcheck.integration.test.ts` (uncertain passes, prompt has target and offer, re-check only touches the right leads); web unit tests.
 
 ## LIVE-3 - Web discovery (Google) as a third lead source (2026-10-28)
 
