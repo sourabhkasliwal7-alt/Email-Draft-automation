@@ -59,7 +59,7 @@ function ReviewArt() {
 }
 
 const STEPS = [
-  { art: <AddLeadsArt />, title: "Add leads", text: "Upload a CSV file of people, or let Apollo find them for a campaign." },
+  { art: <AddLeadsArt />, title: "Add leads", text: "Upload a CSV file, let Apollo find people, or find companies on Google." },
   { art: <StartRunArt />, title: "Start run", text: "The tool reads each company's website and writes a short personal email for the people who fit." },
   { art: <ReviewArt />, title: "Review drafts in Gmail", text: "Read each draft and press Send yourself. Nothing is ever sent automatically." },
 ];

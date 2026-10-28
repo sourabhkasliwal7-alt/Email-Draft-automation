@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { icpSchema } from "@outreach/core";
+import { icpSchema, sourcesOf } from "@outreach/core";
 import { BackLink } from "@/components/bits";
 import { PageHeader } from "@/components/page-header";
 import { requireUser } from "@/lib/auth";
@@ -18,6 +18,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   if (!c) notFound();
 
   const icp = icpSchema.parse(c.icp ?? {});
+  const sources = sourcesOf(icp);
   const win = (c.send_window ?? {}) as { days?: number[]; start?: string; end?: string };
   const defaults: CampaignDefaults = {
     id: c.id,
@@ -29,8 +30,11 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
     employeeMax: icp.employeeMax?.toString() ?? "",
     keywordsInclude: icp.keywordsInclude.join(", "),
     keywordsExclude: icp.keywordsExclude.join(", "),
-    researchFirst: icp.leadSource === "csv" && !icp.requireEmail,
-    leadSource: icp.leadSource,
+    researchFirst: sources.length === 1 && sources[0] === "csv" && !icp.requireEmail,
+    leadSources: sources,
+    webQueries: icp.webQueries.join("\n"),
+    webMaxQueries: String(icp.webMaxQueries),
+    webMaxResults: String(icp.webMaxResults),
     seniorities: icp.seniorities.join(", "),
     hiringTitles: icp.hiringTitles.join(", "),
     minOpenJobs: icp.minOpenJobs?.toString() ?? "",

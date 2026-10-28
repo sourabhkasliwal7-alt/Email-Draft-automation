@@ -574,7 +574,7 @@ ${req.prompt}`)) throw new Error("OpenRouter says the account has too few credit
     // a CSV-only campaign has nothing to search
     const csvOnly = await apolloFindJob(ctx, { campaignId: csvCampaignId }, await mkJob("find3", csvCampaignId));
     expect(csvOnly.found).toBe(0);
-    expect(csvOnly.note).toMatch(/CSV file only/);
+    expect(csvOnly.note).toMatch(/does not use Apollo search/);
   }, 120_000);
 
   it("Apollo credits: the company search is recorded and shown on Home, but it does not use up the email-reveal limits", async () => {

@@ -5,11 +5,13 @@ import { redirect } from "next/navigation";
 import { WORKFLOW_SETTINGS_KEY, parseWorkflowConfig, retryPatch } from "@outreach/core";
 import { startRun } from "@outreach/db";
 import { guardAction, type ActionState } from "@/lib/auth";
+import { NO_CONTACT_ADVICE } from "@/lib/plain";
 import { createServiceDb } from "@/lib/supabase/service";
 
 /** What a person has to do when a lead cannot be retried by pressing a button. */
 const NEEDS_YOU: Record<string, string> = {
   "no-email": "This person has no email address. Add one to your file and upload it again (or find leads with Apollo), then it can go on.",
+  "no-contact": NO_CONTACT_ADVICE,
   "credit-uncertain": "A reveal may have used an Apollo credit but the answer was lost. Check your Apollo account first. It is never retried automatically, so you cannot spend a second credit by mistake. You can skip it.",
 };
 

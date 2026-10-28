@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
 import { DRAFT_NOTICES } from "@/lib/notices";
-import { gmailDraftUrl, gmailDraftsUrl, plainDetail, plainReason } from "@/lib/plain";
+import { NO_CONTACT_ADVICE, gmailDraftUrl, gmailDraftsUrl, plainDetail, plainReason } from "@/lib/plain";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { AttentionButtons } from "./forms";
@@ -24,7 +24,7 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
   const { data: attentionRows } = canAttention
     ? await supabase
         .from("campaign_leads")
-        .select("id, status, reason_codes, lead_score, updated_at, campaigns(name), contacts(full_name, job_title, company_name)")
+        .select("id, status, reason_codes, lead_score, updated_at, lead_source, source_detail, campaigns(name), contacts(full_name, job_title, company_name, companies(name, domain))")
         .overlaps("reason_codes", [...ATTENTION_REASONS])
         .order("updated_at", { ascending: false })
         .limit(200)
@@ -150,13 +150,28 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
                   {attention.map((l) => {
                     const reason = l.reason_codes[0] as SkipReason;
                     const detail = plainDetail(reason, l.reason_codes[1]);
+                    const noContact = reason === "no-contact";
+                    const domain = l.contacts?.companies?.domain ?? null;
+                    const companyName = l.contacts?.company_name ?? l.contacts?.companies?.name ?? domain;
                     return (
                       <tr key={l.id} className="align-top transition-colors hover:bg-brand-soft" data-testid="attention-row">
                         <td className="px-5 py-3">
-                          <div className="font-medium">{l.contacts?.company_name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {l.contacts?.full_name} · {l.contacts?.job_title}
-                          </div>
+                          <div className="font-medium">{companyName}</div>
+                          {noContact ? (
+                            <div className="space-y-0.5 text-xs text-muted-foreground" data-testid="attention-company">
+                              {domain && (
+                                <a href={`https://${domain}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline">
+                                  {domain}
+                                  <ExternalLink className="size-3" aria-hidden />
+                                </a>
+                              )}
+                              {l.source_detail && <div className="break-words">Found by: {l.source_detail}</div>}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              {l.contacts?.full_name} · {l.contacts?.job_title}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3">{l.campaigns?.name}</td>
                         <td className="px-3 py-3 text-right tabular-nums">{l.lead_score ?? "-"}</td>
@@ -167,8 +182,13 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
                               {detail}
                             </div>
                           )}
+                          {noContact && (
+                            <div className="mt-1 text-xs text-foreground" data-testid="attention-advice">
+                              {NO_CONTACT_ADVICE}
+                            </div>
+                          )}
                         </td>
-                        <td className="px-5 py-3">{act && <AttentionButtons leadId={l.id} company={l.contacts?.company_name} />}</td>
+                        <td className="px-5 py-3">{act && <AttentionButtons leadId={l.id} company={companyName} noContact={noContact} />}</td>
                       </tr>
                     );
                   })}

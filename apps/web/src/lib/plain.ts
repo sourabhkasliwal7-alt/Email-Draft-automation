@@ -27,7 +27,11 @@ export const PLAIN_REASON: Record<SkipReason, string> = {
   "gmail-failed": "The draft could not be saved in Gmail. Check the mailbox in Setup",
   "dry-run": "Test run: nothing was done",
   "step-failed": "Something went wrong on one step. Retry tries it again",
+  "no-contact": "No contact found: we found this company but no person to write to. Apollo found nobody, or Apollo is not connected.",
 };
+
+/** What to do about a lead that has no person to write to (Retry cannot help: there is nothing to try again). */
+export const NO_CONTACT_ADVICE = "Connect Apollo, or add the person in a CSV file. Each run looks again for free, so a contact may be found by itself.";
 
 export const plainReason = (code: string | undefined): string => (code ? (PLAIN_REASON[code as SkipReason] ?? code) : "");
 export const isAttentionReason = (code: string | undefined): boolean => ATTENTION_REASONS.includes(code as SkipReason);
@@ -91,7 +95,8 @@ export function plainLeadStatus(l: { status: string; next_action?: string | null
 /** The step name in a run log, in plain words (the log itself stays in the run details). */
 export const PLAIN_STEP: Record<string, string> = {
   target: "working out today's number",
-  search: "finding people",
+  search: "finding people and companies",
+  "web search": "finding companies on Google",
   clean: "removing people we should not write to",
   "quick check": "the quick check",
   "research and score": "research and scoring",

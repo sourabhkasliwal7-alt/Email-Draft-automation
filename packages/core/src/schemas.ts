@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LEAD_SOURCES, legacySourceWord, sourcesOf, type LeadSource } from "./discovery";
 import { normalizeDomain, normalizeEmail } from "./normalize";
 
 /** Comma / newline separated text -> trimmed, de-duplicated list. */
@@ -53,8 +54,14 @@ export const icpSchema = z.object({
   keywordsInclude: z.array(z.string()).default([]),
   keywordsExclude: z.array(z.string()).default([]),
   requireEmail: z.boolean().default(true),
-  /** where a run gets leads: the CSV leads already imported, an Apollo people search, or both (CSV first, Apollo fills the rest) */
-  leadSource: z.enum(["csv", "apollo", "both"]).default("csv"),
+  /** where a run gets leads: any mix of the CSV leads already imported, an Apollo people search and web discovery (Google) */
+  leadSources: z.array(z.enum(LEAD_SOURCES)).default([]),
+  /** the same choice as one word, kept for older screens: csv | apollo | web | both | mix. `sourcesOf(icp)` is the way to read it. */
+  leadSource: z.enum(["csv", "apollo", "web", "both", "mix"]).default("csv"),
+  /** web discovery: search queries typed in the campaign (empty = built from the target), and the caps per run */
+  webQueries: z.array(z.string()).default([]),
+  webMaxQueries: z.number().int().min(1).max(50).default(10),
+  webMaxResults: z.number().int().min(1).max(20).default(10),
   maxLeadsPerRun: z.number().int().min(1).max(500).default(25),
   /** Apollo search only. Job titles come from the campaign's target roles, industries/keywords, countries and employee range from the fields above. */
   seniorities: z.array(z.string()).default([]),
@@ -75,7 +82,13 @@ export const campaignSchema = z
     keywordsInclude: z.string().default(""),
     keywordsExclude: z.string().default(""),
     researchFirst: z.coerce.boolean().default(false),
-    leadSource: z.enum(["csv", "apollo", "both"]).default("csv"),
+    leadSource: z.enum(["csv", "apollo", "web", "both", "mix"]).default("csv"),
+    /** the lead sources ticked in the form (csv, apollo, web). Empty means "use leadSource". */
+    leadSources: z.array(z.enum(LEAD_SOURCES)).default([]),
+    /** one search query per line (web discovery). Empty = built from the target. */
+    webQueries: z.string().default(""),
+    webMaxQueries: z.coerce.number({ error: "Max queries must be a number" }).int("Max queries must be a whole number").min(1, "Max queries must be at least 1").max(50, "Max queries is at most 50").default(10),
+    webMaxResults: z.coerce.number({ error: "Max results must be a number" }).int("Max results must be a whole number").min(1, "Max results must be at least 1").max(20, "Max results is at most 20").default(10),
     seniorities: z.string().default(""),
     hiringTitles: z.string().default(""),
     minOpenJobs: z.string().default(""),
@@ -112,6 +125,7 @@ export type CampaignInput = z.infer<typeof campaignSchema>;
 /** Form values -> database columns. */
 export function campaignToRow(v: CampaignInput) {
   const toNum = (s: string) => (s.trim() === "" ? null : Number(s));
+  const sources: LeadSource[] = sourcesOf({ leadSources: v.leadSources, leadSource: v.leadSource });
   const icp: Icp = {
     industries: splitList(v.industries),
     excludeIndustries: splitList(v.excludeIndustries),
@@ -120,9 +134,13 @@ export function campaignToRow(v: CampaignInput) {
     employeeMax: toNum(v.employeeMax),
     keywordsInclude: splitList(v.keywordsInclude),
     keywordsExclude: splitList(v.keywordsExclude),
-    // Apollo search never returns emails (they are revealed after qualification), so only a CSV-only campaign insists on an email column.
-    requireEmail: !v.researchFirst && v.leadSource === "csv",
-    leadSource: v.leadSource,
+    // Apollo search and web discovery never give emails (they are revealed after qualification), so only a CSV-only campaign insists on an email column.
+    requireEmail: !v.researchFirst && sources.length === 1 && sources[0] === "csv",
+    leadSources: sources,
+    leadSource: legacySourceWord(sources),
+    webQueries: splitLines(v.webQueries),
+    webMaxQueries: v.webMaxQueries,
+    webMaxResults: v.webMaxResults,
     maxLeadsPerRun: v.maxLeadsPerRun,
     seniorities: splitList(v.seniorities),
     hiringTitles: splitList(v.hiringTitles),

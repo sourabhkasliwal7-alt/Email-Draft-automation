@@ -8,6 +8,7 @@ import type {
   GmailSender,
   LlmAdapter,
   SearchAdapter,
+  Usage,
   VerifierAdapter,
 } from "./types";
 
@@ -47,8 +48,35 @@ export const mockFetcher: FetcherAdapter = {
 };
 
 // ---------------------------------------------------------------- search
+/** the query's words (without "agency", so a made-up company name never looks like a discovery query) joined by dashes: the same query always gives the same made-up company sites */
+export function mockQuerySlug(query: string): string {
+  return query.toLowerCase().replace(/\bagency\b/g, " ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24).replace(/-+$/, "");
+}
+
+/**
+ * Web discovery queries ("<industry> agency <country>") get a mixed page of results like a real search engine: company websites,
+ * a directory, a job board, a social page, a news article, a repeated site, and the edge cases (a site that is down, one that does
+ * not fit, one with nobody to write to). Anything else is the "<company> funding" style used by research.
+ */
+function mockDiscoveryResults(query: string) {
+  const slug = mockQuerySlug(query) || "q";
+  return [
+    { title: `Alpha ${slug} | Software agency`, url: `https://web-${slug}-a.example.com/`, snippet: `Alpha builds software for clients. We are hiring React developers.` },
+    { title: `Alpha ${slug} on LinkedIn`, url: `https://www.linkedin.com/company/web-${slug}-a`, snippet: `Company page.` },
+    { title: `Beta ${slug} careers`, url: `https://www.web-${slug}-b.example.com/careers`, snippet: `Open roles at Beta.` },
+    { title: `Top agencies reviewed - Clutch`, url: `https://clutch.co/agencies/${slug}`, snippet: `A directory of agencies.` },
+    { title: `React developer jobs | Indeed`, url: `https://www.indeed.com/q-react-developer-jobs.html`, snippet: `Jobs.` },
+    { title: `The best agencies of the year`, url: `https://www.forbes.com/sites/${slug}`, snippet: `An article.` },
+    { title: `Gamma ${slug}`, url: `https://nofit-${slug}.example.com/`, snippet: `A company that does something else.` },
+    { title: `Delta ${slug}`, url: `https://nocontact-${slug}.example.com/`, snippet: `A small studio.` },
+    { title: `About Alpha ${slug}`, url: `https://web-${slug}-a.example.com/about`, snippet: `The Alpha team.` },
+    { title: `Epsilon ${slug}`, url: `https://down-${slug}.example.com/`, snippet: `A site that is offline.` },
+  ];
+}
+
 export const mockSearch: SearchAdapter = {
   async search({ query, num = 3 }) {
+    if (/\bagency\b/i.test(query)) return { results: mockDiscoveryResults(query).slice(0, num), usage: { units: { search: 1 } } };
     // "<company> funding" style queries; company = everything before the last word
     const words = query.trim().split(/\s+/);
     const company = words.length > 1 ? words.slice(0, -1).join(" ") : query;
@@ -108,8 +136,32 @@ export function mockApolloPeople(): ApolloPerson[] {
 /** every reveal call the mock received, so tests can prove the request flags (no phone, no personal email, no waterfall) */
 export const mockRevealLog: { personId: string; flags: unknown }[] = [];
 
+/** Web discovery: three made-up people at every company domain, except "nocontact-" domains where Apollo knows nobody. */
+export function mockApolloPeopleAt(domain: string): ApolloPerson[] {
+  if (domain.startsWith("nocontact-")) return [];
+  const seed = [...domain].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const titles = ["Head of Operations", "CTO", "Marketing Manager"];
+  return titles.map((title, i) => ({
+    id: `apollo-web-${i}-${domain}`,
+    firstName: FIRST[(seed + i) % FIRST.length]!,
+    lastName: LAST[(seed + i * 3) % LAST.length]!,
+    title,
+    linkedinUrl: null,
+    country: null,
+    organization: { name: companyNameFromHost(domain), domain, industry: null, employeeCount: null },
+  }));
+}
+
 export const mockApollo: ApolloAdapter = {
   async searchPeople(filters, page) {
+    if (filters.domains?.length) {
+      const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
+      const people = filters.domains
+        .flatMap((d) => mockApolloPeopleAt(d))
+        .filter((p) => !filters.titles.length || filters.titles.some((t) => lc(p.title).includes(lc(t))));
+      const usage: Usage = { units: { credit: 0 } };
+      return { people, page, totalPages: 1, totalEntries: people.length, usage };
+    }
     const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
     const all = mockApolloPeople().filter((p) => {
       if (filters.titles.length && !filters.titles.some((t) => lc(p.title).includes(lc(t)))) return false;
@@ -144,6 +196,12 @@ export const mockApollo: ApolloAdapter = {
   },
   async revealEmail({ personId, flags }) {
     mockRevealLog.push({ personId, flags });
+    const web = /^apollo-web-(\d+)-(.+)$/.exec(personId);
+    if (web) {
+      const person = mockApolloPeopleAt(web[2]!).find((p) => p.id === personId);
+      if (!person || web[2]!.startsWith("noemail-")) return { email: null, usage: { units: { credit: 0 } } };
+      return { email: `${person.firstName}.${person.lastName}@${web[2]}`.toLowerCase(), usage: { units: { credit: 1 } } };
+    }
     const n = Number(personId.replace(/\D/g, ""));
     const p = mockApolloPeople()[n];
     if (!p || n % 7 === 6 || !p.organization?.domain) return { email: null, usage: { units: { credit: 0 } } };

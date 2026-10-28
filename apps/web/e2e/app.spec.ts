@@ -39,13 +39,29 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   await expect(page.getByTestId("error-name")).toHaveText("Campaign name is required");
 
   await page.getByLabel("Campaign name").fill(CAMPAIGN);
-  await page.getByLabel("Leads come from").selectOption("both");
+  // CSV is ticked by default; ticking none is refused with one clear message
+  await expect(page.getByTestId("source-csv")).toBeChecked();
+  await page.getByTestId("source-csv").uncheck();
+  await page.getByRole("button", { name: "Create campaign" }).click();
+  await expect(page.getByTestId("error-leadSources")).toContainText("Tick at least one");
+  await page.getByTestId("source-csv").check();
+  await page.getByTestId("source-apollo").check();
+  // the Web discovery block is dimmed until its box is ticked, and shows the queries it would use
+  await expect(page.getByTestId("block-web")).toContainText("Not used");
+  await page.getByTestId("source-web").check();
+  await expect(page.getByTestId("block-web")).not.toContainText("Not used");
+  await expect(page.getByTestId("apollo-with-web-note")).toContainText("Apollo is also used to find the person");
   await expect(page.getByTestId("block-apollo")).toContainText("Used when Apollo looks for people");
   await page.getByLabel("Job titles").fill("COO, Head of Operations");
   await page.getByLabel("Industries", { exact: true }).fill("saas, logistics");
   await page.getByLabel("Founder").check();
   await page.getByLabel("Director").check();
   await page.getByLabel("Companies hiring for").fill("developer");
+  await expect(page.getByTestId("web-query").first()).toHaveText("saas agency");
+  await page.getByLabel("Search queries (one per line)").fill("saas agency pune\nlogistics agency hiring react");
+  await expect(page.getByTestId("web-query")).toHaveText(["saas agency pune", "logistics agency hiring react"]);
+  await page.getByLabel("Max queries per run").fill("4");
+  await page.getByLabel("Max results per query").fill("6");
 
   // bad numbers are explained next to the field
   await page.getByLabel("At least this many open jobs").fill("many");
@@ -63,27 +79,34 @@ test("operator creates a campaign on one page, with clear validation and Apollo 
   await expect(page).toHaveURL(/\/setup\?tab=campaigns$/);
   const row = page.getByTestId("campaign-row").filter({ hasText: CAMPAIGN });
   await expect(row).toBeVisible();
-  await expect(row).toContainText("CSV file + Apollo");
+  await expect(row.getByTestId("campaign-sources")).toContainText("CSV");
+  await expect(row.getByTestId("campaign-sources")).toContainText("Apollo");
+  await expect(row.getByTestId("campaign-sources")).toContainText("Web");
   await expect(row).toContainText("Active");
 
   // the Apollo filters were stored in the campaign
   const { data } = await adminClient().from("campaigns").select("icp, target_roles").eq("name", CAMPAIGN).single();
-  expect(data!.icp).toMatchObject({ leadSource: "both", seniorities: ["founder", "director"], hiringTitles: ["developer"], minOpenJobs: 3, employeeMin: 500, employeeMax: 5000, industries: ["saas", "logistics"] });
+  expect(data!.icp).toMatchObject({ leadSources: ["csv", "apollo", "web"], leadSource: "mix", webQueries: ["saas agency pune", "logistics agency hiring react"], webMaxQueries: 4, webMaxResults: 6, seniorities: ["founder", "director"], hiringTitles: ["developer"], minOpenJobs: 3, employeeMin: 500, employeeMax: 5000, industries: ["saas", "logistics"] });
   expect(data!.target_roles).toEqual(["COO", "Head of Operations"]);
 
   // edit it: everything comes back as it was saved
   await row.getByRole("link", { name: "Edit" }).click();
   await expect(page.getByLabel("Industries", { exact: true })).toHaveValue("saas, logistics");
-  await expect(page.getByLabel("Leads come from")).toHaveValue("both");
+  await expect(page.getByTestId("source-csv")).toBeChecked();
+  await expect(page.getByTestId("source-apollo")).toBeChecked();
+  await expect(page.getByTestId("source-web")).toBeChecked();
+  await expect(page.getByLabel("Search queries (one per line)")).toHaveValue("saas agency pune\nlogistics agency hiring react");
+  await expect(page.getByLabel("Max queries per run")).toHaveValue("4");
   await expect(page.getByLabel("Founder")).toBeChecked();
   await expect(page.getByLabel("Director")).toBeChecked();
   await expect(page.getByLabel("Manager")).not.toBeChecked();
   await expect(page.getByLabel("Companies hiring for")).toHaveValue("developer");
-  await page.getByLabel("Leads come from").selectOption("csv");
+  await page.getByTestId("source-apollo").uncheck();
+  await page.getByTestId("source-web").uncheck();
   await expect(page.getByTestId("block-apollo")).toContainText("Not used");
   await page.getByRole("button", { name: "Save campaign" }).click();
   await expect(page).toHaveURL(/\/setup\?tab=campaigns$/);
-  await expect(page.getByTestId("campaign-row").filter({ hasText: CAMPAIGN })).toContainText("CSV file");
+  await expect(page.getByTestId("campaign-row").filter({ hasText: CAMPAIGN })).toContainText("CSV");
 });
 
 test("operator adds an offer and a case study with allowed numbers", async ({ page }) => {

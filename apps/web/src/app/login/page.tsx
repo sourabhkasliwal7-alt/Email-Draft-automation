@@ -4,7 +4,7 @@ import { getSupabasePublic } from "@/lib/env";
 import { LoginForm } from "./login-form";
 
 const POINTS = [
-  { icon: <FileSpreadsheet className="size-5" aria-hidden />, title: "Bring your leads", text: "Upload a CSV, or let Apollo find people for you." },
+  { icon: <FileSpreadsheet className="size-5" aria-hidden />, title: "Bring your leads", text: "Upload a CSV, let Apollo find people, or find companies on Google." },
   { icon: <SearchCheck className="size-5" aria-hidden />, title: "Researched, never invented", text: "Every fact in an email is quoted from the company's own pages." },
   { icon: <MailCheck className="size-5" aria-hidden />, title: "Drafts in your Gmail", text: "You read them and press Send yourself." },
 ];

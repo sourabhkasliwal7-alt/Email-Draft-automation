@@ -2,11 +2,13 @@
 
 import { Save } from "lucide-react";
 import { useState } from "react";
+import { DEFAULT_WEB_MAX_QUERIES, DEFAULT_WEB_MAX_RESULTS, LEAD_SOURCES, LEAD_SOURCE_LABELS, type LeadSource } from "@outreach/core";
 import { Checkbox, Field, FormMessage, SelectInput, SubmitButton, TextArea, TextInput, inputClass, useActionForm } from "@/components/form";
 import { HelpTip } from "@/components/help-tip";
 import { LinkButton } from "@/components/link-button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { orderSources, previewWebQueries } from "@/lib/web-queries";
 import { saveCampaign } from "./actions";
 
 export interface CampaignDefaults {
@@ -20,7 +22,12 @@ export interface CampaignDefaults {
   keywordsInclude: string;
   keywordsExclude: string;
   researchFirst: boolean;
-  leadSource: string;
+  /** csv, apollo and/or web */
+  leadSources: string[];
+  /** one search query per line; empty = built from the target */
+  webQueries: string;
+  webMaxQueries: string;
+  webMaxResults: string;
   seniorities: string;
   hiringTitles: string;
   minOpenJobs: string;
@@ -50,7 +57,10 @@ export const NEW_CAMPAIGN: CampaignDefaults = {
   keywordsInclude: "",
   keywordsExclude: "",
   researchFirst: false,
-  leadSource: "csv",
+  leadSources: ["csv"],
+  webQueries: "",
+  webMaxQueries: String(DEFAULT_WEB_MAX_QUERIES),
+  webMaxResults: String(DEFAULT_WEB_MAX_RESULTS),
   seniorities: "",
   hiringTitles: "",
   minOpenJobs: "",
@@ -83,10 +93,13 @@ const SENIORITIES: [string, string][] = [
   ["senior", "Senior"],
 ];
 
-const SOURCE_HINT: Record<string, string> = {
-  csv: "Each run works the leads you upload on the Leads page.",
-  apollo: "Each run asks Apollo for people who match the target below (the search is free). Email addresses are unlocked later, only for leads that pass the checks.",
-  both: "Each run works your uploaded leads first, then asks Apollo for more to reach the day's number.",
+const SOURCE_INFO: Record<LeadSource, { text: string; help: string }> = {
+  csv: { text: "The leads you upload on the Leads page are used first.", help: "A CSV file is a spreadsheet of people you already have. You upload it on the Leads page." },
+  apollo: { text: "Apollo finds people who match the target below. The search is free; email addresses are unlocked later, only for leads that pass the checks.", help: "Apollo is a service that finds people for you. Add your key in Setup > Apollo." },
+  web: {
+    text: "Searches Google for company websites that match the target, checks each one, then asks Apollo (a free search) for the right person there.",
+    help: "Only public company websites are read. Nothing is logged into, LinkedIn is never used, and a site that blocks robots is left alone. If Apollo finds nobody, the company waits under Drafts > Needs attention.",
+  },
 };
 
 /** Two fields side by side on a laptop, stacked on a phone. */
@@ -118,15 +131,38 @@ export function CampaignForm({
   inboxes: { id: string; email: string }[];
 }) {
   const { state, onSubmit: action, pending } = useActionForm(saveCampaign);
-  const [source, setSource] = useState(defaults.leadSource);
+  const [sources, setSources] = useState<LeadSource[]>(orderSources(defaults.leadSources));
+  const [sourceError, setSourceError] = useState("");
+  // the web-query preview follows what is typed in the target fields
+  const [target, setTarget] = useState({ industries: defaults.industries, countries: defaults.countries, keywordsInclude: defaults.keywordsInclude, webQueries: defaults.webQueries, maxQueries: defaults.webMaxQueries });
   const [offerId, setOfferId] = useState(defaults.offerId);
   const [seniority, setSeniority] = useState<string[]>(defaults.seniorities.split(",").map((s) => s.trim()).filter(Boolean));
   const err = state.fieldErrors ?? {};
-  const usesApollo = source === "apollo" || source === "both";
+  const usesCsv = sources.includes("csv");
+  const usesApollo = sources.includes("apollo");
+  const usesWeb = sources.includes("web");
+  const queries = previewWebQueries(target);
+  const toggle = (s: LeadSource, on: boolean) => {
+    setSources((cur) => orderSources(on ? [...cur, s] : cur.filter((x) => x !== s)));
+    setSourceError("");
+  };
+  const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    if (sources.length === 0) {
+      e.preventDefault();
+      setSourceError("Tick at least one: CSV file, Apollo search or Web discovery.");
+      return;
+    }
+    action(e);
+  };
+  const track = (e: React.FormEvent<HTMLFormElement>) => {
+    const fd = new FormData(e.currentTarget);
+    const get = (k: string) => String(fd.get(k) ?? "");
+    setTarget({ industries: get("industries"), countries: get("countries"), keywordsInclude: get("keywordsInclude"), webQueries: get("webQueries"), maxQueries: get("webMaxQueries") });
+  };
   const studies = offers.find((o) => o.id === offerId)?.caseStudies ?? [];
 
   return (
-    <form onSubmit={action} className="max-w-3xl space-y-6" noValidate data-testid="campaign-form">
+    <form onSubmit={submit} onInput={track} className="max-w-3xl space-y-6" noValidate data-testid="campaign-form">
       {defaults.id && <input type="hidden" name="id" value={defaults.id} />}
       {/* kept as they are: scoring, depth and send window have no screen in the simple setup */}
       <input type="hidden" name="regions" value={defaults.regions} />
@@ -140,24 +176,47 @@ export function CampaignForm({
       ))}
       <input type="hidden" name="seniorities" value={seniority.join(", ")} />
 
-      <Block testId="block-source" title="1. Name and where the leads come from" description="Give the campaign a name you will recognise, and say where its people come from.">
+      <Block testId="block-source" title="1. Name and where the leads come from" description="Give the campaign a name you will recognise, and tick where its leads come from. You can use more than one.">
         <Field label="Campaign name" name="name" error={err.name}>
           <TextInput name="name" defaultValue={defaults.name} placeholder="For example: Logistics companies in India" />
         </Field>
-        <Field
-          label="Leads come from"
-          name="leadSource"
-          error={err.leadSource}
-          hint={SOURCE_HINT[source]}
-          help="Where the people you write to come from. A CSV file is a spreadsheet you upload on the Leads page. Apollo is a service that finds people for you. Both uses your file first and Apollo for the rest."
-        >
-          <select id="leadSource" name="leadSource" value={source} onChange={(e) => setSource(e.target.value)} className={`${inputClass} pr-9`}>
-            <option value="csv">CSV file</option>
-            <option value="apollo">Apollo</option>
-            <option value="both">Both: CSV file first, then Apollo</option>
-          </select>
-        </Field>
-        {source !== "apollo" && <Checkbox name="researchFirst" label="My CSV file has no email column (emails are found with Apollo later)" defaultChecked={defaults.researchFirst} />}
+        <fieldset className="space-y-2.5" data-field="leadSources" data-testid="lead-sources">
+          <legend className="flex items-center gap-1.5 text-sm font-medium">
+            Where the leads come from
+            <HelpTip label="Where the leads come from">Tick every source this campaign may use. A run works your uploaded CSV leads first, then asks Apollo and Google for more until it reaches the day&apos;s number.</HelpTip>
+          </legend>
+          <div className="grid gap-2.5">
+            {LEAD_SOURCES.map((s) => {
+              const on = sources.includes(s);
+              return (
+                <div key={s} className={cn("flex items-start gap-2.5 rounded-xl border px-3.5 py-3 transition-colors focus-within:ring-3 focus-within:ring-ring/30", on ? "border-brand bg-brand-tint" : "bg-card hover:border-zinc-400")}>
+                  <label className="flex flex-1 cursor-pointer items-start gap-2.5 text-sm">
+                    <input
+                      type="checkbox"
+                      name="leadSources"
+                      value={s}
+                      checked={on}
+                      onChange={(e) => toggle(s, e.target.checked)}
+                      data-testid={`source-${s}`}
+                      className="mt-0.5 size-[1.1rem] shrink-0 rounded border-input accent-[var(--brand)]"
+                    />
+                    <span>
+                      <span className="font-medium text-foreground">{LEAD_SOURCE_LABELS[s]}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{SOURCE_INFO[s].text}</span>
+                    </span>
+                  </label>
+                  <HelpTip label={LEAD_SOURCE_LABELS[s]}>{SOURCE_INFO[s].help}</HelpTip>
+                </div>
+              );
+            })}
+          </div>
+          {(sourceError || err.leadSources) && (
+            <p role="alert" data-testid="error-leadSources" className="text-xs font-medium text-red-700">
+              {sourceError || err.leadSources}
+            </p>
+          )}
+        </fieldset>
+        {usesCsv && <Checkbox name="researchFirst" label="My CSV file has no email column (emails are found with Apollo later)" defaultChecked={defaults.researchFirst} />}
       </Block>
 
       <Block testId="block-target" title="2. Who to write to" description="The kind of person and company. Apollo uses this to search, and the checks use it to decide if a lead fits.">
@@ -203,9 +262,16 @@ export function CampaignForm({
         description={
           usesApollo
             ? "Used when Apollo looks for people. Job titles, industries, countries and company size come from the target above. Leave a field here blank to use only that."
-            : "Not used: this campaign does not use Apollo. Choose Apollo or Both in step 1 to turn these on."
+            : usesWeb
+              ? "Not used to search: with Web discovery Apollo only looks up the person at each company, by the job titles above (free). Tick Apollo search in step 1 to also search Apollo for people."
+              : "Not used: this campaign does not use Apollo. Tick Apollo search in step 1 to turn these on."
         }
       >
+        {usesWeb && (
+          <p data-testid="apollo-with-web-note" className="rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900">
+            With Web discovery selected, Apollo is also used to find the person at each company the Google search finds. That search is free and uses no email credits.
+          </p>
+        )}
         <fieldset className="space-y-2.5" data-field="seniorities">
           <legend className="flex items-center gap-1.5 text-sm font-medium">
             Seniority
@@ -249,7 +315,42 @@ export function CampaignForm({
         <p className="text-xs text-muted-foreground">The hiring filters only work if your Apollo plan allows them. If it does not, Apollo ignores or refuses them and the run says so.</p>
       </Block>
 
-      <Block testId="block-offer" title="4. What you offer" description="The offer the emails talk about. Emails may only make the claims and quote the numbers you list on the offer.">
+      <Block
+        testId="block-web"
+        title="4. Web discovery (Google)"
+        dim={!usesWeb}
+        description={usesWeb ? "How the Google search finds company websites. Only real company sites are kept: directories, job boards, social sites and news are left out." : "Not used: tick Web discovery (Google) in step 1 to turn this on."}
+      >
+        <Field
+          label="Search queries (one per line)"
+          name="webQueries"
+          error={err.webQueries}
+          hint="Leave empty and we build them from your target, for example: <industry> agency <country>; <industry> agency hiring react; <industry> agency careers react developer"
+          help="Each line is one Google search. Leave the box empty and the app builds queries from your industries and countries above."
+        >
+          <TextArea name="webQueries" rows={4} defaultValue={defaults.webQueries} placeholder="saas agency india&#10;saas agency hiring react" />
+        </Field>
+        <div data-testid="web-query-preview" className="rounded-xl border bg-brand-soft/60 p-3.5 text-sm">
+          <p className="font-medium">Queries that will be used ({queries.length})</p>
+          <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-muted-foreground">
+            {queries.map((q) => (
+              <li key={q} data-testid="web-query">
+                {q}
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div className={TWO}>
+          <Field label="Max queries per run" name="webMaxQueries" error={err.webMaxQueries} hint="Default 10, at most 50." help="The most Google searches one run may make. Each query costs one Serper search, so this caps the cost.">
+            <TextInput name="webMaxQueries" defaultValue={defaults.webMaxQueries} />
+          </Field>
+          <Field label="Max results per query" name="webMaxResults" error={err.webMaxResults} hint="Default 10, at most 20." help="How many search results are read for each query. Each query costs one Serper search however many results it returns.">
+            <TextInput name="webMaxResults" defaultValue={defaults.webMaxResults} />
+          </Field>
+        </div>
+      </Block>
+
+      <Block testId="block-offer" title="5. What you offer" description="The offer the emails talk about. Emails may only make the claims and quote the numbers you list on the offer.">
         <Field label="Offer" name="offerId" error={err.offerId} help="What you are offering these companies. It is set up under Setup, Offers. The emails only use the claims and case-study numbers listed there.">
           <select id="offerId" name="offerId" value={offerId} onChange={(e) => setOfferId(e.target.value)} className={`${inputClass} pr-9`}>
             <option value="">No offer chosen</option>
@@ -281,7 +382,7 @@ export function CampaignForm({
         </details>
       </Block>
 
-      <Block testId="block-mailbox" title="5. Where the drafts go" description="The Gmail mailbox that saves the drafts, and how many it may save a day.">
+      <Block testId="block-mailbox" title="6. Where the drafts go" description="The Gmail mailbox that saves the drafts, and how many it may save a day.">
         <Field label="Gmail mailbox" name="inboxId" error={err.inboxId} hint="The drafts are saved here. Add and connect mailboxes in Setup." help="The Gmail account where the drafts appear. You read them there and press Send yourself.">
           <SelectInput name="inboxId" defaultValue={defaults.inboxId} options={[{ value: "", label: "No mailbox chosen" }, ...inboxes.map((i) => ({ value: i.id, label: i.email }))]} />
         </Field>

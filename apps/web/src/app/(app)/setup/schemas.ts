@@ -84,6 +84,25 @@ export const writingRulesToPatch = (f: z.infer<typeof writingRulesFormSchema>, e
   holidays: onlyLines(f.holidays),
 });
 
+/** LinkedIn and Crunchbase are never scraped. They stay on the "never a lead" list whatever is typed. */
+export const ALWAYS_BLOCKED_DOMAINS = ["linkedin.com", "crunchbase.com"];
+
+export const webExcludeFormSchema = z.object({ web_exclude_domains: z.string().default("") });
+
+/** "https://www.Example.com/about" -> "example.com" */
+export const cleanDomainLine = (d: string): string => d.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+
+/** The domains typed in Setup > Advanced, cleaned, without repeats, with LinkedIn and Crunchbase always kept. */
+export const webExcludeToPatch = (f: z.infer<typeof webExcludeFormSchema>): Partial<WorkflowConfig> => ({
+  web_exclude_domains: [...new Set([...lines(f.web_exclude_domains).map(cleanDomainLine).filter((d) => d.includes(".")), ...ALWAYS_BLOCKED_DOMAINS])],
+});
+
+/** The always-blocked domains that are missing from the text (the form tells the person they come back on save). */
+export const missingBlocked = (text: string): string[] => {
+  const have = new Set(lines(text).map(cleanDomainLine));
+  return ALWAYS_BLOCKED_DOMAINS.filter((d) => !have.has(d));
+};
+
 /** The reverse, for filling the form. */
 export function writingRulesToForm(c: WorkflowConfig): Record<string, string> {
   return {

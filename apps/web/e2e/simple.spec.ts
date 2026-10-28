@@ -10,26 +10,34 @@ const E = `e2esimple${Math.random().toString(36).slice(2, 8)}`;
 // campaigns named "itest ..." are never touched by a worker, so nothing seeded here can ever be run by accident
 const CSV_CAMPAIGN = `itest ${E} csv campaign`;
 const APOLLO_CAMPAIGN = `itest ${E} apollo campaign`;
+const WEB_CAMPAIGN = `itest ${E} web campaign`;
 const INBOX_EMAIL = `${E}@example.com`;
 const MESSAGE_ID = "18c0ffee12345678";
 const MODIFY = "https://www.googleapis.com/auth/gmail.modify";
 const COMPOSE = "https://www.googleapis.com/auth/gmail.compose";
 
-const ids = { inbox: "", csv: "", apollo: "", runReal: "", runTest: "", runLive: "", find: "" };
+const ids = { inbox: "", csv: "", apollo: "", web: "", webFind: "", runReal: "", runTest: "", runLive: "", find: "" };
 const leads: Record<string, string> = {};
 let workflowBefore: unknown = null;
 
-async function mkLead(key: string, o: { campaign: string; status: string; next_action?: string | null; reason_codes?: string[]; score?: number | null; email?: string | null }) {
+async function mkLead(
+  key: string,
+  o: { campaign: string; status: string; next_action?: string | null; reason_codes?: string[]; score?: number | null; email?: string | null; source?: string; detail?: string; noPerson?: boolean },
+) {
   const admin = adminClient();
   const { data: company } = await admin.from("companies").insert({ domain: `${key.toLowerCase()}-${E}.example.com`, name: `${key} ${E}` }).select("id").single();
   const { data: contact } = await admin
     .from("contacts")
-    .insert({ first_name: key, last_name: `Lead ${E}`, full_name: `${key} Lead ${E}`, job_title: "COO", email: o.email === undefined ? `${key.toLowerCase()}-${E}@example.com` : o.email, company_id: company!.id, company_name: `${key} ${E}` })
+    .insert(
+      o.noPerson
+        ? { company_id: company!.id, company_name: `${key} ${E}` }
+        : { first_name: key, last_name: `Lead ${E}`, full_name: `${key} Lead ${E}`, job_title: "COO", email: o.email === undefined ? `${key.toLowerCase()}-${E}@example.com` : o.email, company_id: company!.id, company_name: `${key} ${E}` },
+    )
     .select("id")
     .single();
   const { data: lead, error } = await admin
     .from("campaign_leads")
-    .insert({ campaign_id: o.campaign, contact_id: contact!.id, status: o.status, next_action: o.next_action ?? null, reason_codes: o.reason_codes ?? [], lead_score: o.score ?? null, lead_source: "e2esimple" })
+    .insert({ campaign_id: o.campaign, contact_id: contact!.id, status: o.status, next_action: o.next_action ?? null, reason_codes: o.reason_codes ?? [], lead_score: o.score ?? null, lead_source: o.source ?? "e2esimple", source_detail: o.detail ?? null })
     .select("id")
     .single();
   expect(error).toBeNull();
@@ -43,6 +51,8 @@ test.beforeAll(async () => {
   ids.inbox = (await admin.from("inboxes").insert({ email: INBOX_EMAIL, display_name: "E2E", status: "active", scopes: [COMPOSE, MODIFY], connected_at: new Date().toISOString() }).select("id").single()).data!.id;
   ids.csv = (await admin.from("campaigns").insert({ name: CSV_CAMPAIGN, inbox_id: ids.inbox, icp: { leadSource: "csv", requireEmail: true } }).select("id").single()).data!.id;
   ids.apollo = (await admin.from("campaigns").insert({ name: APOLLO_CAMPAIGN, inbox_id: ids.inbox, icp: { leadSource: "apollo", requireEmail: false, seniorities: ["founder"] } }).select("id").single()).data!.id;
+
+  ids.web = (await admin.from("campaigns").insert({ name: WEB_CAMPAIGN, inbox_id: ids.inbox, icp: { leadSources: ["web"], leadSource: "web", requireEmail: false } }).select("id").single()).data!.id;
 
   // two finished runs: the newest is REAL (with the numbers Home shows), an older one is a TEST run.
   // Their times are in the future on purpose: they stay the newest runs however many runs other work creates meanwhile.
@@ -100,6 +110,39 @@ test.beforeAll(async () => {
   await mkLead("Failed", { campaign: ids.csv, status: "approved", next_action: "draft", score: 76, reason_codes: ["step-failed", "write: OpenRouter says the account has too few credits (402)"] });
   await mkLead("NoMail", { campaign: ids.csv, status: "disqualified", reason_codes: ["no-email", "no email in the CSV and no Apollo id to reveal one"], email: null });
   await mkLead("SkipMe", { campaign: ids.csv, status: "approved", next_action: "reveal", reason_codes: ["step-failed", "reveal: ZeroBounce validate failed"] });
+
+  // Web discovery: one company with a person found, one without (parked under Needs attention), and a finished Google search
+  await mkLead("WebFound", { campaign: ids.web, status: "researching", source: "web_discovery", detail: "saas agency hiring react" });
+  await mkLead("WebNone", { campaign: ids.web, status: "disqualified", reason_codes: ["no-contact", "WebNone: a software agency (webnone.example.com)"], source: "web_discovery", detail: "saas agency pune", noPerson: true, email: null });
+  ids.webFind = (
+    await admin
+      .from("jobs")
+      .insert({
+        type: "web.find",
+        idempotency_key: `${E}-webfind-done`,
+        payload: { campaignId: ids.web },
+        campaign_id: ids.web,
+        status: "completed",
+        result: {
+          queries: ["saas agency pune", "saas agency hiring react"],
+          queriesRun: 2,
+          results: 20,
+          kept: 6,
+          checked: 3,
+          contacts: 2,
+          noContact: 1,
+          skipped: { excluded: 9, known: 3, failedCheck: 2, noData: 1 },
+          companies: [
+            { domain: `webfound-${E}.example.com`, name: `WebFound ${E}`, query: "saas agency hiring react", outcome: "lead" },
+            { domain: `webnone-${E}.example.com`, name: `WebNone ${E}`, query: "saas agency pune", outcome: "no-contact" },
+            { domain: `weboff-${E}.example.com`, name: `WebOff ${E}`, query: "saas agency pune", outcome: "failed-check" },
+          ],
+          demo: true,
+        },
+      })
+      .select("id")
+      .single()
+  ).data!.id;
 
   // a finished Apollo search for the Apollo campaign
   ids.find = (
@@ -175,7 +218,7 @@ test("Home: the Getting started list is shown only while something is missing, i
     await expect(checklist).toHaveCount(0);
   } else {
     await expect(checklist).toBeVisible();
-    await expect(checklist.locator("li")).toHaveText([/Connect Gmail/, /Add an offer/, /Set the email footer/, /Create a campaign/, /Add leads \(CSV or Apollo\)/, /Start your first run/]);
+    await expect(checklist.locator("li")).toHaveText([/Connect Gmail/, /Add an offer/, /Set the email footer/, /Create a campaign/, /Add leads \(CSV, Apollo or Google\)/, /Start your first run/]);
     // what the seeded data completes is ticked: mailbox, campaign, leads, a real run
     await expect(page.getByTestId("step-gmail")).toHaveAttribute("data-done", "true");
     await expect(page.getByTestId("step-campaign")).toHaveAttribute("data-done", "true");
@@ -252,12 +295,12 @@ test("Home: a mailbox connected before the label permission is flagged so it can
   }
 });
 
-test("Leads: two clear ways to add leads, an Apollo search with its result, and every lead with a plain status", async ({ page }) => {
+test("Leads: three clear ways to add leads, an Apollo search with its result, and every lead with a plain status", async ({ page }) => {
   await loginAs(page, "operator");
   await page.goto("/leads");
   await expect(page.getByTestId("card-csv")).toContainText("Upload CSV");
-  await expect(page.getByTestId("card-apollo")).toContainText("Find leads with Apollo");
-  await expect(page.getByTestId("card-apollo")).toContainText("does not use any email credits");
+  await expect(page.getByTestId("card-apollo")).toContainText("Apollo search");
+  await expect(page.getByTestId("card-apollo")).toContainText("no email credits are used");
   // side by side
   const [a, b] = await Promise.all([page.getByTestId("card-csv").boundingBox(), page.getByTestId("card-apollo").boundingBox()]);
   expect(Math.abs(a!.y - b!.y)).toBeLessThan(5);
@@ -267,7 +310,7 @@ test("Leads: two clear ways to add leads, an Apollo search with its result, and 
   const options = await page.locator("#apolloCampaignId option").allInnerTexts();
   expect(options).toContain(APOLLO_CAMPAIGN);
   expect(options).not.toContain(CSV_CAMPAIGN);
-  if (process.env.ADAPTER_APOLLO?.trim().toLowerCase() !== "live" || !process.env.APOLLO_API_KEY?.trim()) await expect(page.getByTestId("apollo-demo-note")).toContainText("practice (demo) people");
+  if (process.env.ADAPTER_APOLLO?.trim().toLowerCase() !== "live" || !process.env.APOLLO_API_KEY?.trim()) await expect(page.getByTestId("apollo-demo-note")).toContainText("gives practice people");
 
   // the latest search result of the campaign, in words
   const line = page.getByTestId(`find-result-${ids.apollo}`);
@@ -301,6 +344,64 @@ test("Leads: two clear ways to add leads, an Apollo search with its result, and 
   // the campaign filter narrows the list
   await page.goto(`/leads?campaign=${ids.apollo}`);
   await expect(page.getByTestId("lead-row").filter({ hasText: E })).toHaveCount(0);
+});
+
+test("Leads: a third card finds companies on Google, shows the latest result, and every lead says where it came from", async ({ page }) => {
+  await loginAs(page, "operator");
+  await page.goto("/leads");
+  const card = page.getByTestId("card-web");
+  await expect(card).toContainText("Find companies on Google");
+  await expect(page.getByTestId("web-optional-note")).toContainText("Start run also searches Google automatically");
+  // only campaigns that use Web discovery can search
+  const options = await card.locator("#webCampaignId option").allInnerTexts();
+  expect(options).toContain(WEB_CAMPAIGN);
+  expect(options).not.toContain(CSV_CAMPAIGN);
+  if (process.env.ADAPTER_APOLLO?.trim().toLowerCase() !== "live" || !process.env.APOLLO_API_KEY?.trim()) await expect(page.getByTestId("web-demo-note")).toContainText("Apollo is not connected");
+
+  // the latest result, in words, and the companies with their outcome
+  const result = page.getByTestId(`web-result-${ids.web}`);
+  await expect(result).toContainText("2 searches, 20 results, 6 company sites kept, 3 passed the quick check, 2 people found, 1 with no contact found");
+  await result.getByText(/Show the 3 companies/).click();
+  await expect(result.getByTestId("web-companies").locator("li")).toHaveCount(3);
+  await expect(result).toContainText("Found by: saas agency hiring react");
+  await expect(result).toContainText("No contact found");
+
+  // pressing the button queues the search; the test cancels it so nothing runs
+  await card.locator("#webCampaignId").selectOption({ label: WEB_CAMPAIGN });
+  await page.getByTestId("find-web").click();
+  await expect(page.getByTestId("form-message").last()).toContainText("Search started");
+  const admin = adminClient();
+  const { data: queued } = await admin.from("jobs").select("id, payload").eq("type", "web.find").eq("campaign_id", ids.web).in("status", ["pending", "running"]);
+  for (const j of queued ?? []) {
+    expect(j.payload).toMatchObject({ campaignId: ids.web });
+    await admin.from("jobs").update({ status: "cancelled" }).eq("id", j.id).eq("status", "pending");
+  }
+
+  // the lead list: source and the query that found the company; a company with no person is never a blank row
+  await page.goto(`/leads?campaign=${ids.web}`);
+  const found = page.getByTestId("lead-row").filter({ hasText: `WebFound ${E}` });
+  await expect(found.getByTestId("lead-source")).toHaveText("Web discovery (Google)");
+  await expect(found.getByTestId("lead-found-by")).toHaveText("saas agency hiring react");
+  const none = page.getByTestId("lead-row").filter({ hasText: `WebNone ${E}` });
+  await expect(none).toContainText(`WebNone ${E}`);
+  await expect(none.getByTestId("lead-status")).toContainText("Needs attention: No contact found");
+  await page.goto(`/leads?campaign=${ids.csv}`);
+  await expect(page.getByTestId("lead-row").filter({ hasText: `Found ${E}` }).getByTestId("lead-source")).toHaveText("CSV file");
+  await expect(page.getByTestId("lead-row").filter({ hasText: `Found ${E}` }).getByTestId("lead-found-by")).toHaveText("-");
+});
+
+test("Drafts: a company with no contact is explained in plain words, and Retry is not offered", async ({ page }) => {
+  await loginAs(page, "operator");
+  await page.goto("/drafts?tab=attention");
+  const row = page.getByTestId("attention-row").filter({ hasText: `WebNone ${E}` });
+  await expect(row.getByTestId("attention-reason")).toHaveText("No contact found: we found this company but no person to write to. Apollo found nobody, or Apollo is not connected.");
+  await expect(row.getByTestId("attention-company")).toContainText(`webnone-${E}.example.com`);
+  await expect(row.getByTestId("attention-company")).toContainText("Found by: saas agency pune");
+  await expect(row.getByTestId("attention-advice")).toContainText("Connect Apollo, or add the person in a CSV file. Each run looks again for free");
+  await expect(row.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Skip" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Do not contact" })).toBeVisible();
+  expect(await row.innerText()).not.toMatch(/\b(no-contact|web_discovery)\b/);
 });
 
 test("Drafts: the drafts list opens each one in Gmail, and the second tab says in plain words what needs attention", async ({ page }) => {

@@ -6,6 +6,7 @@ import { runImportJob } from "./import";
 import { adapterTestJob } from "./adapter-test";
 import { apolloFindJob } from "./apollo-find";
 import { sendJob } from "./send";
+import { webFindJob } from "./web-discovery";
 import { workflowRunJob } from "./run";
 
 /**
@@ -26,6 +27,7 @@ export const HANDLERS: Record<string, Handler> = {
   "send.run": sendJob as Handler,
   "adapter.test": adapterTestJob as Handler,
   "apollo.find": apolloFindJob as Handler,
+  "web.find": webFindJob as Handler,
 };
 
 /** Puts jobs back in the queue when the worker that held them stopped without finishing. */

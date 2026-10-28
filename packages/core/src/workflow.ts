@@ -3,6 +3,7 @@
  * reads the same config schema. IDs in comments (A1, C2, E4, W1 ...) are the SRS rule IDs.
  */
 import { z } from "zod";
+import { DEFAULT_WEB_EXCLUDE_DOMAINS } from "./discovery";
 import { normText } from "./research";
 
 // ---------------------------------------------------------------- config (SRS 5.5): one row in `settings`, key "workflow"
@@ -29,6 +30,8 @@ export const workflowConfigSchema = z.object({
   /** "Always run as a test run" (no Apollo credits, no Gmail drafts). Off by default. */
   dry_run: z.boolean().default(false),
   allow_risky: z.boolean().default(false),
+  /** web discovery: sites that are never company websites (directories, job boards, social, news, big platforms). Matches sub-domains too. */
+  web_exclude_domains: z.array(z.string()).default(DEFAULT_WEB_EXCLUDE_DOMAINS),
   /** TESTING ONLY: do not check emails with the verifier. Off by default; Home shows a warning while it is on. */
   skip_verification: z.boolean().default(false),
   run_limit_minutes: z.number().int().min(5).default(120),
@@ -84,14 +87,14 @@ export const SRS_STATUS = { candidate: "imported", screened: "researching", rese
 
 export const SKIP_REASONS = [
   "screen-failed", "no-data", "no-verified-fact", "below-threshold", "over-quota", "no-email", "bad-email", "role-address", "suppressed", "duplicate", "same-company",
-  "draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "consent-risk", "manual", "excluded", "gmail-failed", "dry-run", "step-failed",
+  "draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "consent-risk", "manual", "excluded", "gmail-failed", "dry-run", "step-failed", "no-contact",
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
 export const NEXT_ACTIONS = ["research", "reveal", "draft", "deliver", "wait-send", "followup-1", "followup-2", "nurture-review", "none"] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 
 /** Skip reasons that need a person (shown in "Needs attention"); the others are normal outcomes of the funnel. */
-export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed", "no-email", "step-failed"];
+export const ATTENTION_REASONS: SkipReason[] = ["draft-failed", "extraction-suspect", "credit-cap", "credit-uncertain", "gmail-failed", "no-email", "step-failed", "no-contact"];
 
 /**
  * What "Retry" does for a lead in Needs attention: put it back at the step that failed (earlier steps are kept, so nothing
@@ -155,6 +158,7 @@ export const SKIP_LABELS: Record<SkipReason, string> = {
   "gmail-failed": "Gmail draft could not be created: check the mailbox connection",
   "dry-run": "Dry run: nothing was spent or drafted",
   "step-failed": "A step stopped with an error (the next run tries it again): see the detail",
+  "no-contact": "No contact found: the company looks right, but no person to write to was found (Apollo found nobody, or Apollo is not connected)",
 };
 
 const ALLOWED: Record<string, string[]> = {

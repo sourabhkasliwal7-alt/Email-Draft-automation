@@ -1,16 +1,16 @@
 import { Archive, BookOpen, Megaphone, Pencil } from "lucide-react";
-import { can, type Role } from "@outreach/core";
+import { can, sourcesOf, type Role } from "@outreach/core";
 import { ConfirmButton } from "@/components/confirm";
 import { LinkButton } from "@/components/link-button";
 import { Badge, EmptyState } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
+import { sourceShort } from "@/lib/web-queries";
 import { hasDemoData, isDemoCampaign, isDemoCaseStudy, isDemoInbox, isDemoOffer } from "@/lib/demo-data";
 import { createClient } from "@/lib/supabase/server";
 import { archiveCampaign } from "../campaigns/actions";
 import { archiveOffer } from "../offers/actions";
 import { archiveDemoData } from "./actions";
 
-const SOURCE_TEXT: Record<string, string> = { csv: "CSV file", apollo: "Apollo", both: "CSV file + Apollo" };
 const STATUS_TEXT: Record<string, { text: string; tone: "green" | "amber" | "neutral" }> = {
   active: { text: "Active", tone: "green" },
   paused: { text: "Paused", tone: "amber" },
@@ -71,7 +71,13 @@ export async function CampaignsTab({ role }: { role: Role }) {
                           {isDemoCampaign(c) && <Badge>Demo</Badge>}
                         </span>
                       </td>
-                      <td className="px-3 py-3">{SOURCE_TEXT[(c.icp as { leadSource?: string } | null)?.leadSource ?? "csv"] ?? "CSV file"}</td>
+                      <td className="px-3 py-3" data-testid="campaign-sources">
+                        <span className="flex flex-wrap gap-1">
+                          {sourcesOf(c.icp as { leadSources?: string[]; leadSource?: string } | null).map((s) => (
+                            <Badge key={s}>{sourceShort(s)}</Badge>
+                          ))}
+                        </span>
+                      </td>
                       <td className="px-3 py-3">
                         <Badge tone={st.tone}>{st.text}</Badge>
                       </td>

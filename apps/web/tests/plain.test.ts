@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ATTENTION_REASONS, SKIP_REASONS, retryPatch } from "@outreach/core";
 import { buildChecklist, setupComplete } from "../src/lib/checklist";
-import { PLAIN_PAUSE, PLAIN_REASON, gmailDraftUrl, gmailDraftsUrl, isAttentionReason, plainDetail, plainLeadStatus, plainReason, plainStep } from "../src/lib/plain";
+import { NO_CONTACT_ADVICE, PLAIN_PAUSE, PLAIN_REASON, gmailDraftUrl, gmailDraftsUrl, isAttentionReason, plainDetail, plainLeadStatus, plainReason, plainStep } from "../src/lib/plain";
 
 /** words that belong in Setup > Advanced only */
 const INTERNAL = /\b(adapter|ledger|reveal|stage [ab]|ICP|pipeline|batch|quote check|extraction|webhook|waterfall)\b/i;
@@ -14,6 +14,9 @@ describe("plain language", () => {
       expect(text, code).not.toMatch(INTERNAL);
       expect(text.length, code).toBeGreaterThan(10);
     }
+    expect(PLAIN_REASON["no-contact"]).toMatch(/^No contact found/);
+    expect(isAttentionReason("no-contact")).toBe(true);
+    expect(NO_CONTACT_ADVICE).toMatch(/Connect Apollo/);
     expect(plainReason("something-new")).toBe("something-new");
     expect(plainReason(undefined)).toBe("");
   });
@@ -45,6 +48,7 @@ describe("plain language", () => {
 
   it("run steps and pauses read like sentences", () => {
     expect(plainStep("research and score")).toBe("research and scoring");
+    expect(plainStep("search")).toBe("finding people and companies");
     expect(plainStep(undefined)).toBe("starting");
     expect(plainStep("unheard-of")).toBe("unheard-of");
     for (const text of Object.values(PLAIN_PAUSE)) expect(text).not.toMatch(INTERNAL);
@@ -61,7 +65,7 @@ describe("Getting started checklist", () => {
   const none = { gmailConnected: false, offers: 0, footerSet: false, campaigns: 0, leads: 0, realRuns: 0 };
   it("lists the six steps in the order a new person does them", () => {
     const steps = buildChecklist(none);
-    expect(steps.map((s) => s.label)).toEqual(["Connect Gmail", "Add your offer", "Fill in the email footer", "Create a campaign", "Add leads (CSV or Apollo)", "Start your first run"]);
+    expect(steps.map((s) => s.label)).toEqual(["Connect Gmail", "Add your offer", "Fill in the email footer", "Create a campaign", "Add leads (CSV, Apollo or Google)", "Start your first run"]);
     expect(steps.every((s) => !s.done)).toBe(true);
     expect(setupComplete(steps)).toBe(false);
     expect(steps.map((s) => s.href)).toEqual(["/setup?tab=gmail", "/setup?tab=offers", "/setup?tab=footer", "/setup?tab=campaigns", "/leads", "#start"]);
@@ -91,5 +95,6 @@ describe("Retry sends a lead back to the step that failed", () => {
     expect(retryPatch({ status: "disqualified", next_action: null, reason_codes: ["no-email", "x"] }, { hasEmail: false, hasDraft: false })).toBeNull();
     expect(retryPatch({ status: "disqualified", next_action: null, reason_codes: ["no-email", "x"] }, { hasEmail: true, hasDraft: false })).toMatchObject({ status: "imported" });
     expect(retryPatch({ status: "disqualified", next_action: null, reason_codes: ["suppressed"] }, both)).toBeNull();
+    expect(retryPatch({ status: "disqualified", next_action: null, reason_codes: ["no-contact", "Acme"] }, both)).toBeNull();
   });
 });

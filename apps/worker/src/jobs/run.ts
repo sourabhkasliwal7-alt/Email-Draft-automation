@@ -6,6 +6,7 @@ import {
   icpSchema,
   istDayStartIso,
   leadsToFind,
+  sourcesOf,
   validateWorkflowConfig,
   type SkipReason,
   type WorkflowConfig,
@@ -21,6 +22,7 @@ import { type PullResult, apolloFiltersFor, pullFromApollo } from "./apollo-pull
 import { saveEmailDraft, writeEmail } from "../pipeline/write";
 import { loadSuppression } from "./import";
 import { suppressionHalt } from "./suppression";
+import { discoverFromWeb, webSkipReason } from "./web-discovery";
 
 export interface RunPayload {
   batchId: string;
@@ -58,10 +60,10 @@ export async function computeTarget(ctx: WorkerCtx, campaign: Campaign, cfg: Wor
     reasons.push("no mailbox chosen on the campaign");
   }
   // Apollo credits only limit leads that need an email revealed: a CSV lead already has its email, so it never costs a credit.
-  // CSV only: no limit. Apollo: the credits left. Both: the credits left plus the leads that already have an email.
-  const source = icpSchema.parse(campaign.icp ?? {}).leadSource;
-  const usesCredits = source !== "csv";
-  const free = source === "both" ? await countOpenLeadsWithEmail(ctx, campaign.id) : 0;
+  // CSV only: no limit. Apollo or web discovery: the credits left. A mix with CSV: the credits left plus the leads that already have an email.
+  const sources = sourcesOf(icpSchema.parse(campaign.icp ?? {}));
+  const usesCredits = sources.some((s) => s !== "csv");
+  const free = usesCredits && sources.includes("csv") ? await countOpenLeadsWithEmail(ctx, campaign.id) : 0;
   const used = await creditsUsed(ctx);
   const dailyCreditsLeft = Math.max(0, cfg.daily_reveal_cap - used.today) + free;
   const monthlyLeft = Math.max(0, cfg.monthly_credit_cap - used.month) + free;
@@ -260,15 +262,20 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
       }
       const want = leadsToFind(target, cfg.approval_rate);
       const icp = icpSchema.parse(campaign.icp ?? {});
-      if (icp.leadSource === "apollo" || icp.leadSource === "both") {
-        // "both": the leads already in the campaign (CSV) come first, Apollo only fills what is still missing
-        const have = icp.leadSource === "both" ? await countOpenLeads(ctx, campaign.id) : 0;
-        const wantFromApollo = Math.max(0, want - have);
+      const sources = sourcesOf(icp);
+      // the leads already in the campaign (CSV) come first; Apollo and web discovery only fill what is still missing
+      const have = sources.includes("csv") ? await countOpenLeads(ctx, campaign.id) : 0;
+      let missing = Math.max(0, want - have);
+      let webNoContact = 0;
+      if (sources.includes("apollo")) {
+        // with web discovery as well, Apollo fills half of what is missing and the web fills the rest
+        const wantFromApollo = sources.includes("web") ? Math.ceil(missing / 2) : missing;
         const skipWhy = apolloSkipReason(ctx, dryRun, wantFromApollo);
         if (skipWhy) await patchTotals(db, batch.id, {}, { step: "search", count: 0, note: skipWhy });
         else {
           try {
             const pull = await pullFromApollo(ctx, campaign, { id: batch.id, started_by: batch.started_by }, job, wantFromApollo, cfg);
+            missing = Math.max(0, missing - pull.imported);
             await patchTotals(db, batch.id, { pull }, { step: "search", count: pull.found, note: pull.note ?? `${pull.imported} new, ${pull.duplicate} duplicates, ${pull.suppressed} suppressed, ${pull.invalid} invalid` });
           } catch (e) {
             const n = (e as Error).name;
@@ -277,7 +284,25 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           }
         }
       }
+      if (sources.includes("web")) {
+        const skipWhy = webSkipReason(ctx);
+        if (skipWhy) await patchTotals(db, batch.id, {}, { step: "web search", count: 0, note: skipWhy });
+        else {
+          try {
+            const web = await discoverFromWeb(ctx, campaign, { id: batch.id, started_by: batch.started_by }, job, missing, cfg);
+            webNoContact = web.noContact;
+            const parts = [`${web.queriesRun} search(es), ${web.results} results`, `${web.kept} new company sites`, `${web.checked} checked`, `${web.contacts} with a person to write to`, ...(web.noContact ? [`${web.noContact} with no contact found (in Needs attention)`] : []), ...(web.revived ? [`${web.revived} contact(s) found for companies from earlier runs`] : [])];
+            await patchTotals(db, batch.id, { web: { ...web, companies: undefined } }, { step: "web search", count: web.contacts, note: web.note ?? parts.join(", ") });
+          } catch (e) {
+            const n = (e as Error).name;
+            if (n === "CapReachedError" || n === "MissingPriceError") throw e;
+            await patchTotals(db, batch.id, {}, { step: "web search", count: 0, note: `Web discovery failed (${(e as Error).message}); using the leads already in the campaign` });
+          }
+        }
+      }
       const { picked, skippedBy, resumed, redone } = await cleanAndSelect(ctx, campaign, cfg, want);
+      // companies found on the web with nobody to write to are already parked in Needs attention: they count as found and as skipped
+      if (webNoContact) skippedBy["no-contact"] = (skippedBy["no-contact"] ?? 0) + webNoContact;
       funnel.found = picked.length + Object.values(skippedBy).reduce((a, n) => a + n, 0);
       funnel.checked = picked.length;
       const cleanNote = [redone ? `${redone} lead(s) had demo research from mock adapters and were started again with the real ones` : "", resumed ? `${resumed} approved lead(s) continued from an earlier run` : "", Object.keys(skippedBy).length ? `skipped: ${Object.entries(skippedBy).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""].filter(Boolean).join("; ");

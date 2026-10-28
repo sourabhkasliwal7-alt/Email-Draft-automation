@@ -89,8 +89,46 @@ export function createLiveApollo(opts: ApolloOptions): ApolloAdapter {
     throw new HttpError(res.status, apolloMessage(res.status, what, text, secret), text);
   }
 
+  /**
+   * Web discovery: the people who work at known company domains. One free people search per domain (`q_organization_domains_list[]`),
+   * so every person is tied to the domain that was asked for. No company search runs, so no credit is used.
+   */
+  async function searchByDomains(filters: ApolloFilters, page: number) {
+    const people: ApolloPerson[] = [];
+    let totalEntries = 0;
+    for (const domain of filters.domains ?? []) {
+      const res = await call<{ people?: ApolloPersonRow[]; total_entries?: number }>(
+        "POST",
+        "/mixed_people/api_search",
+        {
+          q_organization_domains_list: [domain],
+          person_titles: filters.titles.length ? filters.titles : undefined,
+          person_seniorities: filters.seniorities.length ? filters.seniorities : undefined,
+          per_page: Math.min(filters.perPage ?? 10, 100),
+          page: 1,
+        },
+        "people search",
+      );
+      totalEntries += res.total_entries ?? 0;
+      for (const p of res.people ?? []) {
+        if (!p.id || !p.first_name) continue; // the email greets the person by first name
+        people.push({
+          id: p.id,
+          firstName: p.first_name,
+          lastName: p.last_name ?? p.last_name_obfuscated ?? "",
+          title: p.title ?? null,
+          linkedinUrl: p.linkedin_url ?? null,
+          country: null,
+          organization: { name: p.organization?.name ?? domain, domain, industry: null, employeeCount: null },
+        });
+      }
+    }
+    return { people, page, totalPages: 1, totalEntries, usage: { units: { credit: 0 } } };
+  }
+
   return {
     async searchPeople(filters, page) {
+      if (filters.domains?.length) return searchByDomains(filters, page);
       const orgFilters = organizationFilters(filters);
       if (!orgFilters.hasCompanyFilter) {
         throw new Error("Apollo search needs at least one company filter (industry or keywords, a country, an employee range, or hiring). Add one to the campaign.");

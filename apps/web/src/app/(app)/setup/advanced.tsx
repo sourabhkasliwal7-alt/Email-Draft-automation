@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { latestAdapterTests } from "@/lib/adapter-tests";
 import { createClient } from "@/lib/supabase/server";
 import { deleteSpendCap, testConnection } from "./actions";
-import { CreditsForm, ModelsForm, PriceForm, RunRulesForm, SpendCapForm, WritingRulesForm } from "./forms";
+import { CreditsForm, ModelsForm, PriceForm, RunRulesForm, SpendCapForm, WebExcludeForm, WritingRulesForm } from "./forms";
 import { writingRulesToForm } from "./schemas";
 import { SuppressionBlock } from "./suppression-block";
 
@@ -74,6 +74,7 @@ export async function AdvancedTab({ role, workflow: wf }: { role: Role; workflow
         <CreditsForm values={{ daily_reveal_cap: workflow.daily_reveal_cap, monthly_credit_cap: workflow.monthly_credit_cap }} />
         <ModelsForm values={{ model_screen: workflow.model_screen, model_extract: workflow.model_extract, model_write: workflow.model_write }} />
         <WritingRulesForm values={writingRulesToForm(workflow)} />
+        <WebExcludeForm values={{ web_exclude_domains: workflow.web_exclude_domains.join("\n") }} />
 
         <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-card" data-testid="connections">
           <h2 className="text-lg font-semibold">Connections</h2>

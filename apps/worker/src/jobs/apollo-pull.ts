@@ -74,25 +74,38 @@ export async function pullFromApollo(ctx: WorkerCtx, campaign: Campaign, batch: 
     return { found: 0, imported: 0, duplicate: 0, suppressed: 0, invalid: 0, note: stoppedByLimit ? "Apollo credit limit reached: nothing was searched" : "Apollo returned no people for these filters" };
   }
 
+  const { totals } = await importApolloPeople(ctx, campaign, batch, job.jobId, picked);
+  return { found: picked.length, imported: totals.imported, duplicate: totals.duplicate, suppressed: totals.suppressed, invalid: totals.invalid, note: stoppedByLimit ? "stopped early: Apollo credit limit reached" : undefined };
+}
+
+type ApolloPeople = Awaited<ReturnType<WorkerCtx["adapters"]["apollo"]["searchPeople"]>>["people"];
+
+/**
+ * Stores people found by an Apollo search through the CSV import engine (duplicates, do-not-contact and suppression are checked there)
+ * and remembers each person's Apollo id so the email can be revealed later, for approved leads only.
+ * `contacts` maps an Apollo person id to the contact that was created or matched.
+ */
+export async function importApolloPeople(ctx: WorkerCtx, campaign: Campaign, batch: { id: string; started_by: string | null }, jobId: string, people: ApolloPeople, tag = "apollo") {
   const importBatch = must(
     await ctx.db
       .from("import_batches")
-      .insert({ file_name: `apollo-pull-${batch.id.slice(0, 8)}`, file_hash: `apollo:${job.jobId}`, campaign_id: campaign.id, mapping: APOLLO_MAPPING as unknown as Json, mode: "add_new", status: "mapped", runs: 1, user_id: batch.started_by })
+      .insert({ file_name: `${tag}-pull-${batch.id.slice(0, 8)}`, file_hash: `${tag}:${jobId}`, campaign_id: campaign.id, mapping: APOLLO_MAPPING as unknown as Json, mode: "add_new", status: "mapped", runs: 1, user_id: batch.started_by })
       .select("*")
       .single(),
     "create apollo import batch",
   );
-  const rows = picked.map((p) => [p.id, p.firstName, p.lastName, p.title ?? "", p.organization?.name ?? "", p.organization?.domain ?? "", p.organization?.industry ?? "", String(p.organization?.employeeCount ?? ""), p.country ?? "", p.linkedinUrl ?? ""]);
+  const rows = people.map((p) => [p.id, p.firstName, p.lastName, p.title ?? "", p.organization?.name ?? "", p.organization?.domain ?? "", p.organization?.industry ?? "", String(p.organization?.employeeCount ?? ""), p.country ?? "", p.linkedinUrl ?? ""]);
   const table = { sheetNames: ["apollo"], sheet: "apollo", headers: HEADERS, rawHeaders: HEADERS, hasHeader: true, rows, rowNumbers: rows.map((_, i) => i + 2), blankRows: 0, encoding: null, delimiter: null, warnings: [] };
   const totals = await importTable(ctx.db, importBatch, { requireEmail: false, stored: APOLLO_MAPPING as never, run: 1 }, table, ctx.log);
 
-  // remember each person's Apollo id so the email can be revealed later, after approval
   const imported = must(await ctx.db.from("import_rows").select("contact_id, original").eq("batch_id", importBatch.id).in("status", ["imported", "updated"]), "load imported apollo rows");
+  const contacts = new Map<string, string>();
   for (const r of imported) {
     if (!r.contact_id) continue;
     const personId = (r.original as Record<string, string>)["Apollo ID"];
+    if (personId) contacts.set(personId, r.contact_id);
     const { data: has } = await ctx.db.from("enrichment_results").select("id").eq("contact_id", r.contact_id).eq("provider", "apollo").limit(1).maybeSingle();
     if (!has && personId) await ctx.db.from("enrichment_results").insert({ contact_id: r.contact_id, provider: "apollo", result: { person_id: personId } as Json, credits_used: 0 });
   }
-  return { found: picked.length, imported: totals.imported, duplicate: totals.duplicate, suppressed: totals.suppressed, invalid: totals.invalid, note: stoppedByLimit ? "stopped early: Apollo credit limit reached" : undefined };
+  return { totals, contacts };
 }

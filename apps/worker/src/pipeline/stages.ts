@@ -82,30 +82,49 @@ const TRIGGER_ORDER: TriggerType[] = ["none", "tech-change", "public-talk", "awa
 const triggerRank = (f: Fact) => TRIGGER_ORDER.indexOf(f.trigger) * 1000 + (f.date ? new Date(f.date).getTime() / DAY / 1000 : 0);
 
 // ---------------------------------------------------------------- Stage A (C1): does the homepage open, and does the business fit?
-export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, lead: LeadBundle): Promise<{ fit: "yes" | "uncertain"; businessType: string } | Skipped> {
-  const company = lead.contacts!.companies;
-  if (!company?.domain) return skipLead(ctx.db, lead, "no-data", "no company website") as Promise<Skipped>;
-  const prev = (lead.score_components as { screen?: { fit: "yes" | "uncertain" | "no"; business_type: string; mode?: string } } | null)?.screen;
-  // a quick check made by the mock model is not reused once the real model is on (results saved before this note count as mock)
-  if (prev && (prev.mode ?? "mock") === ctx.modes.llm) return prev.fit === "no" ? (skipLead(ctx.db, lead, "screen-failed", prev.business_type) as Promise<Skipped>) : { fit: prev.fit, businessType: prev.business_type };
+type ScreenResult = ReturnType<typeof screenSchema.parse>;
+export type SiteScreen = { ok: true; result: ScreenResult } | { ok: false; reason: "no-data" | "screen-failed"; detail: string };
 
+/**
+ * The quick check of one company website: open the homepage, ask the cheap model whether the business fits. It needs no lead, so
+ * web discovery can run it on a company before any person is stored. Nothing is saved here.
+ */
+export async function screenCompanySite(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, company: { domain: string; name: string; market: string }): Promise<SiteScreen> {
   let page;
   try {
     page = await ctx.adapters.fetcher.fetchPage(`https://${company.domain}/`);
   } catch (e) {
     ctx.log(`screen fetch ${company.domain} failed: ${(e as Error).message}`);
-    return skipLead(ctx.db, lead, "no-data", "homepage did not open") as Promise<Skipped>;
+    return { ok: false, reason: "no-data", detail: "homepage did not open" };
   }
-  if (page.status !== 200 || !page.text.trim()) return skipLead(ctx.db, lead, "no-data", `homepage did not open (${page.status})`) as Promise<Skipped>;
+  if (page.status !== 200 || !page.text.trim()) return { ok: false, reason: "no-data", detail: `homepage did not open (${page.status})` };
 
-  const { system, prompt } = buildScreenPrompt({ name: company.name ?? company.domain, domain: company.domain }, (lead.campaigns?.icp as { industries?: string[] } | undefined)?.industries?.join(", ") ?? "", page.text);
-  let result = null;
+  const { system, prompt } = buildScreenPrompt({ name: company.name, domain: company.domain }, company.market, page.text);
+  let result: ScreenResult | null = null;
   for (let attempt = 0; attempt < 2 && !result; attempt++) {
     const res = await paid("llm", "screen", () => ctx.adapters.llm.complete({ tier: "cheap", model: cfg.model_screen, system, prompt, maxTokens: 200 }));
     const parsed = screenSchema.safeParse(parseJsonLoose(res.text));
     if (parsed.success) result = parsed.data;
   }
-  if (!result) return skipLead(ctx.db, lead, "screen-failed", "the quick check returned unreadable output") as Promise<Skipped>;
+  return result ? { ok: true, result } : { ok: false, reason: "screen-failed", detail: "the quick check returned unreadable output" };
+}
+
+export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig, lead: LeadBundle): Promise<{ fit: "yes" | "uncertain"; businessType: string } | Skipped> {
+  const company = lead.contacts!.companies;
+  if (!company?.domain) return skipLead(ctx.db, lead, "no-data", "no company website") as Promise<Skipped>;
+  const prev = (lead.score_components as { screen?: { fit: "yes" | "uncertain" | "no"; business_type: string; mode?: string } } | null)?.screen;
+  // a quick check made by the mock model is not reused once the real model is on (results saved before this note count as mock)
+  if (prev && (prev.mode ?? "mock") === ctx.modes.llm) {
+    if (prev.fit === "no") return skipLead(ctx.db, lead, "screen-failed", prev.business_type) as Promise<Skipped>;
+    // a lead that came with its quick check already done (web discovery) moves on without paying for it again
+    if (lead.status === "imported") must(await ctx.db.from("campaign_leads").update({ status: "researching", icp_segment: prev.business_type }).eq("id", lead.id), "save quick check");
+    return { fit: prev.fit, businessType: prev.business_type };
+  }
+
+  const market = (lead.campaigns?.icp as { industries?: string[] } | undefined)?.industries?.join(", ") ?? "";
+  const screen = await screenCompanySite(ctx, paid, cfg, { domain: company.domain, name: company.name ?? company.domain, market });
+  if (!screen.ok) return skipLead(ctx.db, lead, screen.reason, screen.detail) as Promise<Skipped>;
+  const result = screen.result;
 
   const components = { ...((lead.score_components as object) ?? {}), screen: { ...result, mode: ctx.modes.llm } } as Json;
   must(await ctx.db.from("campaign_leads").update({ score_components: components, icp_segment: result.business_type, status: result.fit === "no" ? lead.status : "researching" }).eq("id", lead.id), "save quick check");

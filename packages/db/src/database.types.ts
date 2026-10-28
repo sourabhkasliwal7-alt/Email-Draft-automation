@@ -67,6 +67,7 @@ export type Database = {
           reason_codes: string[]
           review_required: boolean
           score_components: Json
+          source_detail: string | null
           status: string
           trigger: string | null
           trigger_date: string | null
@@ -92,6 +93,7 @@ export type Database = {
           reason_codes?: string[]
           review_required?: boolean
           score_components?: Json
+          source_detail?: string | null
           status?: string
           trigger?: string | null
           trigger_date?: string | null
@@ -117,6 +119,7 @@ export type Database = {
           reason_codes?: string[]
           review_required?: boolean
           score_components?: Json
+          source_detail?: string | null
           status?: string
           trigger?: string | null
           trigger_date?: string | null

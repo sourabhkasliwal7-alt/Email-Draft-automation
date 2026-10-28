@@ -124,15 +124,17 @@ export function SubmitButton({
   variant = "default",
   icon,
   size,
+  testId,
 }: {
   children: React.ReactNode;
   pending?: boolean;
   variant?: "default" | "outline" | "destructive";
   icon?: React.ReactNode;
   size?: "default" | "sm" | "lg";
+  testId?: string;
 }) {
   return (
-    <Button type="submit" variant={variant} size={size} icon={icon} pending={pending}>
+    <Button type="submit" variant={variant} size={size} icon={icon} pending={pending} data-testid={testId}>
       {children}
     </Button>
   );

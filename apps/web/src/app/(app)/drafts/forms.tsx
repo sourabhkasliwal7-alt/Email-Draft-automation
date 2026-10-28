@@ -8,18 +8,20 @@ import { markDncAction, skipLeadAction } from "../attention/actions";
 import { retryLeadAction } from "./actions";
 
 /** Retry / Skip / Do not contact for one lead in Needs attention. Skip and Do not contact ask first. */
-export function AttentionButtons({ leadId, company }: { leadId: string; company?: string | null }) {
+export function AttentionButtons({ leadId, company, noContact = false }: { leadId: string; company?: string | null; noContact?: boolean }) {
   const { state, onSubmit, pending } = useActionForm(retryLeadAction);
   const who = company ? `this lead at ${company}` : "this lead";
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex flex-wrap justify-end gap-2">
-        <form onSubmit={onSubmit}>
-          <input type="hidden" name="id" value={leadId} />
-          <SubmitButton size="sm" pending={pending} icon={<RotateCcw aria-hidden />}>
-            Retry
-          </SubmitButton>
-        </form>
+        {!noContact && (
+          <form onSubmit={onSubmit}>
+            <input type="hidden" name="id" value={leadId} />
+            <SubmitButton size="sm" pending={pending} icon={<RotateCcw aria-hidden />}>
+              Retry
+            </SubmitButton>
+          </form>
+        )}
         <ActionForm action={skipLeadAction} success="The lead was skipped. It will not be written to in this campaign.">
           <input type="hidden" name="id" value={leadId} />
           <ConfirmButton

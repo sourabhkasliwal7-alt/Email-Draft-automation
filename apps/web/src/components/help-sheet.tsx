@@ -35,6 +35,15 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
     ),
   },
   {
+    q: "What is Web discovery (Google)?",
+    a: (
+      <>
+        <p>A third way to get leads: the app searches Google for company websites that match your campaign, runs the quick check on each one, and asks Apollo (a free search) for the right person there.</p>
+        <p className="mt-2">It only reads public company websites, never logs in anywhere and never uses LinkedIn. A company with no person found waits under Needs attention as &ldquo;No contact found&rdquo;.</p>
+      </>
+    ),
+  },
+  {
     q: "How are email credits used?",
     a: (
       <>
@@ -45,7 +54,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
   },
 ];
 
-/** A Help button that opens a side panel with the four questions people ask most. */
+/** A Help button that opens a side panel with the questions people ask most. */
 export function HelpSheet({ variant = "ghost" }: { variant?: "ghost" | "outline" }) {
   return (
     <Sheet title="Help" trigger={<span className="max-lg:sr-only">Help</span>} icon={<LifeBuoy aria-hidden />} variant={variant} size="sm" data-testid="help-button">

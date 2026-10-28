@@ -24,7 +24,7 @@ export function buildChecklist(i: ChecklistInput): ChecklistStep[] {
     { key: "offer", label: "Add your offer", action: "Add offer", done: i.offers > 0, href: "/setup?tab=offers" },
     { key: "footer", label: "Fill in the email footer", action: "Fill footer", done: i.footerSet, href: "/setup?tab=footer" },
     { key: "campaign", label: "Create a campaign", action: "Create campaign", done: i.campaigns > 0, href: "/setup?tab=campaigns" },
-    { key: "leads", label: "Add leads (CSV or Apollo)", action: "Add leads", done: i.leads > 0, href: "/leads" },
+    { key: "leads", label: "Add leads (CSV, Apollo or Google)", action: "Add leads", done: i.leads > 0, href: "/leads" },
     { key: "run", label: "Start your first run", action: "Go to Start run", done: i.realRuns > 0, href: "#start" },
   ];
 }

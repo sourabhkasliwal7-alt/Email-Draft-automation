@@ -1,8 +1,12 @@
 "use client";
 
-import { Checkbox, Field, FormMessage, SelectInput, SubmitButton, TextArea, TextInput, useActionForm } from "@/components/form";
+import { useState } from "react";
+import { DEFAULT_WEB_EXCLUDE_DOMAINS } from "@outreach/core";
+import { Checkbox, Field, FormMessage, SelectInput, SubmitButton, TextArea, TextInput, inputClass, useActionForm } from "@/components/form";
+import { Button } from "@/components/ui/button";
 import type { ActionState } from "@/lib/auth";
-import { addPrice, addSpendCap, saveCredits, saveFooter, saveModels, saveRunRules, saveSchedule, saveWritingRules } from "./actions";
+import { addPrice, addSpendCap, saveCredits, saveFooter, saveModels, saveRunRules, saveSchedule, saveWebExclude, saveWritingRules } from "./actions";
+import { missingBlocked } from "./schemas";
 
 type SaveAction = (prev: ActionState, formData: FormData) => Promise<ActionState>;
 
@@ -155,6 +159,37 @@ export function WritingRulesForm({ values }: { values: Record<string, string> })
         </>
       )}
     </SettingsCard>
+  );
+}
+
+/** Setup > Advanced: websites Web discovery never uses as a lead. Reset puts the default list in the box; Save stores it. */
+export function WebExcludeForm({ values }: { values: { web_exclude_domains: string } }) {
+  const { state, onSubmit, pending } = useActionForm(saveWebExclude);
+  const [text, setText] = useState(values.web_exclude_domains);
+  const missing = missingBlocked(text);
+  const err = state.fieldErrors ?? {};
+  return (
+    <form onSubmit={onSubmit} noValidate data-testid="form-web-exclude" className="max-w-3xl space-y-4 rounded-2xl border bg-card p-5 shadow-card">
+      <h3 className="font-medium">Websites we never use as leads</h3>
+      <p className="text-xs text-muted-foreground">
+        Web discovery reads Google results, and keeps only a company&apos;s own website. Directories, job boards, social sites, news sites and big platforms are left out; so is any site that is already in your lists. One domain per line; a domain also covers its sub-domains.
+      </p>
+      <Field label="Domains" name="web_exclude_domains" error={err.web_exclude_domains} hint="For example: clutch.co, indeed.com, medium.com">
+        <textarea id="web_exclude_domains" name="web_exclude_domains" rows={8} value={text} onChange={(e) => setText(e.target.value)} className={inputClass} />
+      </Field>
+      {missing.length > 0 && (
+        <p data-testid="web-exclude-warning" className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">
+          {missing.join(" and ")} always stay blocked: LinkedIn and Crunchbase are never scraped (their terms forbid it). They are added back when you save.
+        </p>
+      )}
+      <FormMessage state={state} />
+      <div className="flex flex-wrap gap-2">
+        <SubmitButton pending={pending}>Save list</SubmitButton>
+        <Button type="button" variant="outline" onClick={() => setText(DEFAULT_WEB_EXCLUDE_DOMAINS.join("\n"))} data-testid="web-exclude-reset">
+          Reset to default
+        </Button>
+      </div>
+    </form>
   );
 }
 

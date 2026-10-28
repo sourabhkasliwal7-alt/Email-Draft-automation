@@ -68,6 +68,11 @@ export interface ApolloFilters {
   hiringTitles?: string[];
   /** companies with at least this many open job postings */
   minOpenJobs?: number | null;
+  /**
+   * Web discovery: look only for people who work at these company domains (free people search, no company search, no credits).
+   * When set, the company filters above are ignored.
+   */
+  domains?: string[];
 }
 export interface ApolloRevealFlags {
   revealPersonalEmails: false;

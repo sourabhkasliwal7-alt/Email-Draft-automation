@@ -1,18 +1,18 @@
 import { ExternalLink, Play } from "lucide-react";
 import Link from "next/link";
-import { can, formatKolkata } from "@outreach/core";
+import { can, formatKolkata, leadSourceLabel, sourcesOf } from "@outreach/core";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { inputClass } from "@/components/form";
 import { LinkButton } from "@/components/link-button";
 import { Badge, EmptyState, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { isTestActive, latestApolloFinds, type FindRow } from "@/lib/adapter-tests";
+import { isTestActive, latestApolloFinds, latestWebFinds, type FindRow, type WebFindCompany, type WebFindRow } from "@/lib/adapter-tests";
 import { requireUser } from "@/lib/auth";
 import { gmailDraftUrl, plainLeadStatus } from "@/lib/plain";
 import { createClient } from "@/lib/supabase/server";
 import { UploadForm } from "../import/forms";
-import { FindApolloForm } from "./forms";
+import { FindApolloForm, FindWebForm } from "./forms";
 
 function findLine(row: FindRow | undefined): { text: string; tone: "ok" | "wait" | "error" } | null {
   if (!row) return null;
@@ -26,6 +26,23 @@ function findLine(row: FindRow | undefined): { text: string; tone: "ok" | "wait"
   return { text: `${r.demo ? "Practice data (demo): " : ""}${parts.join(", ")}.${r.note ? ` ${r.note}` : ""}`, tone: "ok" };
 }
 
+function webLine(row: WebFindRow | undefined): { text: string; tone: "ok" | "wait" | "error" } | null {
+  if (!row) return null;
+  if (row.state === "waiting" || row.state === "running") return { text: row.waitingTooLong ? "Waiting for the background worker. Is it running? (pnpm dev starts it.)" : "Searching Google and checking the companies…", tone: "wait" };
+  if (row.state === "failed" || !row.result) return { text: `The search failed: ${row.error ?? "no answer from the background worker"}`, tone: "error" };
+  const r = row.result;
+  const parts = [`${r.queriesRun ?? 0} searches`, `${r.results ?? 0} results`, `${r.kept ?? 0} company sites kept`, `${r.checked ?? 0} passed the quick check`, `${r.contacts ?? 0} people found`];
+  if (r.noContact) parts.push(`${r.noContact} with no contact found`);
+  return { text: `${r.demo ? "Practice data (demo): " : ""}${parts.join(", ")}.${r.note ? ` ${r.note}` : ""}`, tone: "ok" };
+}
+
+const OUTCOME: Record<WebFindCompany["outcome"], { label: string; tone: "green" | "amber" | "neutral" }> = {
+  lead: { label: "Added as a lead", tone: "green" },
+  "no-contact": { label: "No contact found", tone: "amber" },
+  "failed-check": { label: "Not a fit", tone: "neutral" },
+  "no-data": { label: "Site not readable", tone: "neutral" },
+};
+
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<{ campaign?: string }> }) {
   const user = await requireUser("lead.view");
   const { campaign: campaignFilter } = await searchParams;
@@ -34,18 +51,21 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
   let query = supabase
     .from("campaign_leads")
-    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, campaigns(name), contacts(full_name, job_title, email, companies(name, domain))")
+    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, lead_source, source_detail, campaigns(name), contacts(full_name, job_title, email, company_name, companies(name, domain))")
     .order("created_at", { ascending: false })
     .limit(200);
   if (campaignFilter) query = query.eq("campaign_id", campaignFilter);
-  const [{ data: leads }, { data: campaigns }, { data: uploads }, finds] = await Promise.all([
+  const [{ data: leads }, { data: campaigns }, { data: uploads }, finds, webFinds] = await Promise.all([
     query,
     supabase.from("campaigns").select("id, name, icp").is("deleted_at", null).order("name"),
     canAdd ? supabase.from("import_batches").select("id, file_name, status, dry_run, totals, created_at, campaigns(name)").order("created_at", { ascending: false }).limit(5) : Promise.resolve({ data: [] }),
     canAdd ? latestApolloFinds() : Promise.resolve({} as Record<string, FindRow>),
+    canAdd ? latestWebFinds() : Promise.resolve({} as Record<string, WebFindRow>),
   ]);
   const campaignList = campaigns ?? [];
-  const apolloCampaigns = campaignList.filter((c) => ["apollo", "both"].includes((c.icp as { leadSource?: string } | null)?.leadSource ?? "csv"));
+  const usesSource = (c: { icp: unknown }, s: "apollo" | "web") => sourcesOf(c.icp as { leadSources?: string[]; leadSource?: string } | null).includes(s);
+  const apolloCampaigns = campaignList.filter((c) => usesSource(c, "apollo"));
+  const webCampaigns = campaignList.filter((c) => usesSource(c, "web"));
   const apolloLive = process.env.ADAPTER_APOLLO?.trim().toLowerCase() === "live" && Boolean(process.env.APOLLO_API_KEY?.trim());
 
   // Draft links: Gmail opens a draft by its message id
@@ -63,18 +83,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     <>
       <PageHeader
         title="Leads"
-        description="Bring in the people you want to write to: upload a CSV file, or let Apollo find them. Then press Start run on Home."
+        description="Bring in the people you want to write to: upload a CSV file, let Apollo find them, or find companies on Google. Then press Start run on Home."
         actions={
           <LinkButton href="/" icon={<Play aria-hidden />} data-testid="go-start-run">
             Go to Start run
           </LinkButton>
         }
       />
-      <AutoRefresh active={Object.values(finds).some(isTestActive)} />
+      <AutoRefresh active={Object.values(finds).some(isTestActive) || Object.values(webFinds).some(isTestActive)} />
 
       <div className="space-y-8">
         {canAdd && (
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-5 xl:grid-cols-3">
             <Card className="space-y-4 p-5 sm:p-6" data-testid="card-csv">
               <div>
                 <h2 className="text-lg font-semibold">Upload CSV</h2>
@@ -127,7 +147,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   <Link href="/setup?tab=campaigns" className="font-medium text-brand underline">
                     Setup &gt; Campaigns
                   </Link>{" "}
-                  set the lead source to Apollo or Both.
+                  tick Apollo under &ldquo;Where the leads come from&rdquo;.
                 </p>
               )}
               {apolloCampaigns.map((c) => {
@@ -137,6 +157,66 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                     <span className="font-medium">{c.name}:</span> {line.text}
                   </p>
                 ) : null;
+              })}
+            </Card>
+
+            <Card className="space-y-4 p-5 sm:p-6" data-testid="card-web">
+              <div>
+                <h2 className="text-lg font-semibold">Find companies on Google</h2>
+                <p className="mt-0.5 text-sm text-muted-foreground" data-testid="web-optional-note">
+                  Optional: Start run also searches Google automatically for campaigns with Web discovery. Preview adds the companies it finds to your leads now.
+                </p>
+              </div>
+              {!apolloLive && (
+                <p data-testid="web-demo-note" className="rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900">
+                  Apollo is not connected, so people cannot be found for the companies: they go to Needs attention as &ldquo;No contact found&rdquo;. Add your Apollo key in{" "}
+                  <Link href="/setup?tab=apollo" className="font-medium underline">
+                    Setup &gt; Apollo
+                  </Link>
+                  .
+                </p>
+              )}
+              {webCampaigns.length ? (
+                <FindWebForm campaigns={webCampaigns.map((c) => ({ id: c.id, name: c.name }))} />
+              ) : (
+                <div className="space-y-3" data-testid="web-empty">
+                  <p className="text-sm text-muted-foreground">No campaign uses Web discovery yet. Tick &ldquo;Web discovery (Google)&rdquo; in a campaign to turn it on.</p>
+                  <LinkButton href="/setup?tab=campaigns" variant="outline" size="sm">
+                    Go to Setup &gt; Campaigns
+                  </LinkButton>
+                </div>
+              )}
+              {webCampaigns.map((c) => {
+                const row = webFinds[c.id];
+                const line = webLine(row);
+                if (!line) return null;
+                const companies = row?.result?.companies ?? [];
+                return (
+                  <div key={c.id} data-testid={`web-result-${c.id}`} className="space-y-2">
+                    <p className={`text-sm ${line.tone === "error" ? "font-medium text-red-700" : line.tone === "ok" ? "text-emerald-800" : "text-muted-foreground"}`}>
+                      <span className="font-medium">{c.name}:</span> {line.text}
+                    </p>
+                    {companies.length > 0 && (
+                      <details className="rounded-xl border bg-background px-3.5 py-2.5 text-sm open:bg-card">
+                        <summary className="cursor-pointer font-medium text-brand">Show the {companies.length} companies</summary>
+                        <ul className="mt-3 space-y-2" data-testid="web-companies">
+                          {companies.slice(0, 50).map((co) => (
+                            <li key={co.domain} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                              <span className="min-w-0">
+                                <a href={`https://${co.domain}`} target="_blank" rel="noreferrer" className="font-medium text-brand underline-offset-2 hover:underline">
+                                  {co.name}
+                                </a>{" "}
+                                <span className="text-xs text-muted-foreground">{co.domain}</span>
+                                <span className="block text-xs break-words text-muted-foreground">Found by: {co.query}</span>
+                              </span>
+                              <Badge tone={OUTCOME[co.outcome]?.tone ?? "neutral"}>{OUTCOME[co.outcome]?.label ?? co.outcome}</Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                );
               })}
             </Card>
           </div>
@@ -163,16 +243,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             </form>
           </div>
           {!leads?.length ? (
-            <EmptyState>No leads yet. Upload a CSV or preview Apollo leads above.</EmptyState>
+            <EmptyState>No leads yet. Upload a CSV, preview Apollo leads or find companies on Google above.</EmptyState>
           ) : (
             <Card className="overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[44rem] text-sm">
+                <table className="w-full min-w-[56rem] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                       <th scope="col" className="px-5 py-3">Person</th>
                       <th scope="col" className="px-3 py-3">Company</th>
                       <th scope="col" className="px-3 py-3">Campaign</th>
+                      <th scope="col" className="px-3 py-3">Source</th>
+                      <th scope="col" className="px-3 py-3">Found by</th>
                       <th scope="col" className="px-3 py-3">Where it stands</th>
                       <th scope="col" className="px-5 py-3 text-right">Added (IST)</th>
                     </tr>
@@ -181,16 +263,22 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                     {leads.map((l) => {
                       const st = plainLeadStatus(l);
                       const d = draftOf.get(l.id);
+                      const company = l.contacts?.companies?.name ?? l.contacts?.company_name ?? l.contacts?.companies?.domain ?? null;
                       return (
                         <tr key={l.id} className="align-top transition-colors hover:bg-brand-soft" data-testid="lead-row">
                           <td className="px-5 py-3">
-                            <div className="font-medium">{l.contacts?.full_name}</div>
+                            <div className="font-medium">{l.contacts?.full_name ?? <span className="text-muted-foreground">No person yet</span>}</div>
                             <div className="text-xs text-muted-foreground">
                               {l.contacts?.job_title} {l.contacts?.email ? `· ${l.contacts.email}` : ""}
                             </div>
                           </td>
-                          <td className="px-3 py-3">{l.contacts?.companies?.name ?? l.contacts?.companies?.domain}</td>
+                          <td className="px-3 py-3">
+                            <div>{company ?? "-"}</div>
+                            {l.contacts?.companies?.domain && company !== l.contacts.companies.domain && <div className="text-xs text-muted-foreground">{l.contacts.companies.domain}</div>}
+                          </td>
                           <td className="px-3 py-3">{l.campaigns?.name}</td>
+                          <td className="px-3 py-3 whitespace-nowrap" data-testid="lead-source">{leadSourceLabel(l.lead_source)}</td>
+                          <td className="max-w-56 px-3 py-3 text-xs break-words text-muted-foreground" data-testid="lead-found-by">{l.lead_source === "web_discovery" && l.source_detail ? l.source_detail : "-"}</td>
                           <td className="px-3 py-3" data-testid="lead-status">
                             <div className="flex flex-wrap items-center gap-2">
                               <Badge tone={st.tone}>{st.label}</Badge>

@@ -9,7 +9,21 @@
 | CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
 | LIVE-1 | CSV runs, Gmail connection, live Claude/Serper/ZeroBounce/fetcher | built; adapters stay on mock until you switch them | 2026-10-27 |
 | LIVE-2 | Simple 4-page UI, Apollo as a main lead source, retry, email quality, gmail.modify label | built; Apollo needs your key | 2026-10-28 |
+| LIVE-3 | Web discovery (Google) as a third lead source | built and tested on mock adapters; needs your Serper key and Apollo for contacts | 2026-10-28 |
 | 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## LIVE-3 - Web discovery (Google) as a third lead source (2026-10-28)
+
+**Built**
+- Campaign lead source is now any mix of **CSV file**, **Apollo search** and **Web discovery (Google)** (`icp.leadSources`; the old one-word `leadSource` is still written and read, `sourcesOf()` is the way to read it). New campaign fields: typed search queries (one per line; empty = built from the target), max queries per run (default 10), max results per query (default 10).
+- Worker: new `web.find` job and the web step of a run (`jobs/web-discovery.ts`). Queries -> Serper (one recorded usage row per query, spend caps and price table apply) -> only company websites (`core/discovery.ts`: configurable exclude list in Setup > Advanced, LinkedIn and Crunchbase always on it; government, education and IP addresses dropped) -> drop websites already stored or on the suppression list -> quick check per company (`screenCompanySite`, the same check a lead gets; a lead created by discovery carries its result, so it is never paid for twice) -> free Apollo people search by company website (`q_organization_domains_list[]`) -> best person for the campaign's target titles -> normal flow (research, score, approve, reveal, verify, write, Gmail draft).
+- Fill order of a run: CSV leads already in the campaign, then Apollo and web (when both are ticked, Apollo fills half of what is missing and web the rest). Searching stops as soon as enough people are found.
+- Nobody found, or Apollo not connected: the company is kept as a lead in Needs attention with reason `no-contact` and the company info; no email is guessed. Every later run looks the company up again for free (up to 15 per run).
+- Every lead stores its source (`lead_source = web_discovery`) and the search that found it (`campaign_leads.source_detail`, migration `20261028100000_lead_source_detail.sql`).
+- Web: campaign form with three source boxes, queries preview and caps; Leads page third card "Find companies on Google" with Preview and a result list; lead list columns Source and Found by; Needs attention shows *No contact found* with company info and no Retry; Setup > Advanced "Websites we never use as leads".
+- Safety: web discovery is refused when the search is in demo mode while anything real (page fetcher, model, Apollo) is on; demo people never reach a real run; a test run may search and check companies (small Serper/model cost) but never spends Apollo credits.
+
+**Tests**: core `discovery.test.ts`; adapters `web-discovery.test.ts` (live Apollo by website, mock search/people); worker `web-discovery.integration.test.ts` (filters, known/suppressed, caps, usage per query, no contact, re-check, safety gates, a full run, CSV + web mix); web `web-discovery-ui.test.ts`.
 
 ## LIVE-2 - simple UI, Apollo, retry, quality (2026-10-28)
 

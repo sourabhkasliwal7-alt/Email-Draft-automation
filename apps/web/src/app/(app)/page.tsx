@@ -1,6 +1,6 @@
 import { Check, FileText, Mail, PauseCircle, Rocket, Sparkles, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { ATTENTION_REASONS, can, formatKolkata, type SkipReason } from "@outreach/core";
+import { ATTENTION_REASONS, can, formatKolkata, sourcesOf, type SkipReason } from "@outreach/core";
 import { GMAIL_MODIFY_SCOPE } from "@outreach/adapters";
 import { ActionForm } from "@/components/action-form";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -184,8 +184,9 @@ export default async function HomePage() {
   const usdPerDraft = drafted > 0 ? priced.reduce((a, s) => a + (s.costUsd ?? 0), 0) / drafted : null;
   const estimates: Record<string, RunEstimate> = Object.fromEntries(
     campaignList.map((c) => {
-      const source = (c.icp as { leadSource?: string } | null)?.leadSource ?? "csv";
-      return [c.id, { drafts: c.daily_cap, credits: source === "csv" ? 0 : c.daily_cap, usdPerDraft, hasMailbox: Boolean(c.inbox_id), apolloPeople: source === "csv" ? 0 : Math.ceil(c.daily_cap / 0.75) }];
+      const sources = sourcesOf(c.icp as { leadSources?: string[]; leadSource?: string } | null);
+      const csvOnly = sources.length === 1 && sources[0] === "csv";
+      return [c.id, { drafts: c.daily_cap, credits: csvOnly ? 0 : c.daily_cap, usdPerDraft, hasMailbox: Boolean(c.inbox_id), apolloPeople: csvOnly ? 0 : Math.ceil(c.daily_cap / 0.75) }];
     }),
   );
   const draftsLink = connected[0] ? gmailDraftsUrl(connected[0].email) : null;
