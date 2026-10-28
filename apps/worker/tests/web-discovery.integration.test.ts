@@ -33,7 +33,7 @@ describe.skipIf(!enabled)("web discovery (mock adapters, real database)", () => 
   async function mkCampaign(name: string, icp: Record<string, unknown>, extra: Record<string, unknown> = {}) {
     const { data, error } = await db
       .from("campaigns")
-      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 4, target_roles: ["Head of Operations"], icp: { requireEmail: false, industries: ["logistics"], countries: [], seniorities: [], ...icp } as Json, ...extra })
+      .insert({ name: `${tag} ${name}`, offer_id: offerId, offer_ids: [offerId], inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 4, target_roles: ["Head of Operations"], icp: { requireEmail: false, industries: ["logistics"], countries: [], seniorities: [], ...icp } as Json, ...extra })
       .select("id")
       .single();
     expect(error).toBeNull();

@@ -33,6 +33,7 @@ export const mockFetcher: FetcherAdapter = {
   async fetchPage(url) {
     const u = new URL(url);
     const retrievedAt = new Date().toISOString();
+    if (/(^|\.)(linkedin|crunchbase)\.com$/.test(u.hostname)) throw new Error("this site is never read (LinkedIn and Crunchbase are not scraped)");
     const name = companyNameFromHost(u.hostname);
     if (u.hostname.startsWith("down-")) return { url, status: 503, text: "", retrievedAt };
     if (u.hostname.startsWith("empty-")) return { url, status: 200, text: "", retrievedAt };
@@ -307,10 +308,9 @@ export const mockLlm: LlmAdapter = {
         get("TOOLS"),
         get("WHITE_LABEL_LINE"),
         "",
-        bad ? "Happy to share an example, you will love it!" : "Happy to share an example of how that works if it is useful.",
+        bad ? "Happy to share an example, you will love it!" : "Happy to share a short example if it is useful, just reply.",
         "",
-        get("SENDER_FIRST_NAME"),
-        "Nuance Infotech",
+        ...[get("SENDER_NAME") || get("SENDER_FIRST_NAME"), get("SENDER_COMPANY") || "Nuance Infotech"].filter(Boolean),
       ];
       text = JSON.stringify({ subject: `idea for ${company}`, body: lines.join("\n"), fact_ids_used: fact ? [fact[1]] : [] });
     } else if (task === "check_email") {

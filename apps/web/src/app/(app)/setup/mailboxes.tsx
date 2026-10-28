@@ -30,7 +30,7 @@ export async function loadGmailFacts() {
 }
 
 /** Setup > Gmail: every Gmail account the drafts are created in. Each mailbox signs in to Google on its own. */
-export async function GmailTab({ role, gmail, adding }: { role: Role; gmail?: string; adding: boolean }) {
+export async function GmailTab({ role, gmail, adding, senderCompany }: { role: Role; gmail?: string; adding: boolean; senderCompany: string }) {
   const supabase = await createClient();
   // The refresh-token column is not selectable by any user role; list only the safe columns.
   const { data: inboxes } = await supabase
@@ -76,7 +76,7 @@ export async function GmailTab({ role, gmail, adding }: { role: Role; gmail?: st
         </div>
       )}
 
-      {manage && (adding || list.length === 0) && <AddInboxForm />}
+      {manage && (adding || list.length === 0) && <AddInboxForm company={senderCompany} />}
 
       {!list.length ? (
         <Card className="flex flex-col items-center gap-3 border-dashed px-6 py-10 text-center" data-testid="empty-state">
@@ -179,7 +179,7 @@ export async function GmailTab({ role, gmail, adding }: { role: Role; gmail?: st
                   )}
 
                   <div className="mt-4 rounded-xl bg-muted/50 p-4">
-                    {manage ? <InboxLimitsForm inbox={i} /> : <p className="text-sm text-muted-foreground">Draft limit {i.daily_draft_cap} a day</p>}
+                    {manage ? <InboxLimitsForm inbox={i} company={senderCompany} /> : <p className="text-sm text-muted-foreground">Draft limit {i.daily_draft_cap} a day</p>}
                   </div>
                 </Card>
               </li>

@@ -129,7 +129,7 @@ function row(over: Partial<NormalizedRow>): NormalizedRow {
   return {
     first_name: "Ann", last_name: "Lee", full_name: "Ann Lee", job_title: null, email: null, email_lower: null, profile_url: null,
     company_name: null, company_domain: null, country: null, industry: null, employee_count: null, email_status: "unknown",
-    lead_source: null, warnings: [], emailInvalid: false, ...over,
+    lead_source: null, warnings: [], emailInvalid: false, data_flags: [], ...over,
   };
 }
 
@@ -204,5 +204,35 @@ describe("error CSV", () => {
     expect(body).toContain("'+1@x");
     expect(body).toContain("'@cmd");
     expect(body).not.toMatch(/(^|,)[=+@-]/);
+  });
+});
+
+describe("Apollo / CSV email status and data flags", () => {
+  const map = { fields: { first_name: "F", email: "E", email_status: "S", company_domain: "W" } };
+  const status = (v: string) => normalizeRow({ F: "Ann", E: "ann@acme.io", S: v, W: "acme.io" }, map).email_status;
+
+  it("maps a catch-all address to risky (a catch-all domain accepts anything), never to valid", () => {
+    for (const v of ["Catch-all", "catch all", "Catch_All", "accept_all", "Accept All"]) expect(status(v), v).toBe("risky");
+  });
+  it("keeps valid only for what the source says it verified, and unchecked stays unknown", () => {
+    expect(status("Verified")).toBe("valid");
+    expect(status("Valid")).toBe("valid");
+    expect(status("")).toBe("unknown");
+    expect(status("Unavailable")).toBe("unknown");
+    expect(status("Guessed")).toBe("risky");
+    expect(status("Bounced")).toBe("invalid");
+  });
+  it("flags an email whose domain is not the company website: 'email domain mismatch'", () => {
+    const flagged = normalizeRow({ F: "Ann", E: "ann@triniumsystems.com", W: "elkview.com" }, map);
+    expect(flagged.data_flags).toEqual(["email domain mismatch"]);
+    expect(flagged.warnings.join(" ")).toMatch(/Email domain mismatch: triniumsystems.com is not the company website elkview.com/);
+    expect(normalizeRow({ F: "Ann", E: "ann@gmail.com", W: "elkview.com" }, map).data_flags).toEqual(["email domain mismatch"]);
+  });
+  it("does not flag the same site, a sub-domain either way, or a row without both", () => {
+    for (const [email, site] of [["ann@acme.io", "https://www.acme.io/about"], ["ann@mail.acme.io", "acme.io"], ["ann@acme.io", "app.acme.io"]]) {
+      expect(normalizeRow({ F: "Ann", E: email!, W: site! }, map).data_flags, `${email} / ${site}`).toEqual([]);
+    }
+    expect(normalizeRow({ F: "Ann", E: "ann@acme.io" }, { fields: { first_name: "F", email: "E" } }).data_flags).toEqual([]); // the website comes from the email: nothing to compare
+    expect(normalizeRow({ F: "Ann", W: "acme.io" }, { fields: { first_name: "F", company_domain: "W" } }).data_flags).toEqual([]);
   });
 });

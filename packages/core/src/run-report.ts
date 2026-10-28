@@ -48,6 +48,8 @@ export interface RunReportLead {
   jobTitle: string | null;
   email: string | null;
   emailStatus: string | null;
+  /** data problems found on the lead, for example "email domain mismatch" (score_components.data_flags) */
+  dataFlags: string[];
   profileUrl: string | null;
 
   companyName: string | null;
@@ -86,6 +88,8 @@ export interface RunReportLead {
   wouldApprove: boolean;
 
   offerName: string | null;
+  /** why the rules chose that offer (campaign_leads.offer_reason) */
+  offerReason: string | null;
   caseStudy: string | null;
 
   draft: { subject: string; body: string; attempts: number | null } | null;
@@ -93,10 +97,12 @@ export interface RunReportLead {
   mailbox: string | null;
 
   costUsd: number | null;
+  /** the language models that did the steps this lead went through (from the run's settings at its start); a null step did not happen for this lead */
+  models: { quickCheck: string | null; facts: string | null; writing: string | null; checker: string | null };
 }
 
 export const RUN_REPORT_COLUMNS = [
-  "First name", "Last name", "Job title", "Email", "Email status", "Profile URL",
+  "First name", "Last name", "Job title", "Email", "Email status", "Data flags", "Profile URL",
   "Company", "Website", "Country", "Employees", "Industry", "Business type",
   "Source", "Search query",
   "Quick check", "Quick check reason",
@@ -104,10 +110,10 @@ export const RUN_REPORT_COLUMNS = [
   "Trigger", "Trigger date", "Trigger source",
   "Score", "Score: fit", "Score: trigger", "Score: role", "Score: size", "Score: data quality", "Cut-off", "Decision",
   "Skip reason", "Stopped at step",
-  "Offer", "Case study",
+  "Offer", "Why this offer", "Case study",
   "Email subject", "Email body", "Email quality",
   "Gmail draft link", "Mailbox",
-  "Cost (USD)",
+  "Model used", "Cost (USD)",
 ] as const;
 export type RunReportColumn = (typeof RUN_REPORT_COLUMNS)[number];
 
@@ -127,6 +133,14 @@ export function emailQualityOf(l: Pick<RunReportLead, "draft" | "reasonCodes">):
   return "";
 }
 
+/** "quick check: A | facts: B | writing: C | checker: D", only the steps the lead went through. */
+export function modelUsedText(m: RunReportLead["models"]): string {
+  return ([["quick check", m.quickCheck], ["facts", m.facts], ["writing", m.writing], ["checker", m.checker]] as const)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(" | ");
+}
+
 export function reportRow(l: RunReportLead): Record<RunReportColumn, string> {
   const reason = l.status === "disqualified" ? (l.reasonCodes[0] ?? "") : "";
   const detail = l.reasonCodes[1] ?? "";
@@ -138,6 +152,7 @@ export function reportRow(l: RunReportLead): Record<RunReportColumn, string> {
     "Job title": text(l.jobTitle),
     "Email": text(l.email),
     "Email status": text(l.emailStatus),
+    "Data flags": l.dataFlags.join(" | "),
     "Profile URL": text(l.profileUrl),
     "Company": text(l.companyName),
     "Website": text(l.domain),
@@ -168,12 +183,14 @@ export function reportRow(l: RunReportLead): Record<RunReportColumn, string> {
     "Skip reason": skipText,
     "Stopped at step": reason ? stepOfReason(reason, detail) : "",
     "Offer": text(l.offerName),
+    "Why this offer": text(l.offerReason),
     "Case study": text(l.caseStudy),
     "Email subject": text(l.draft?.subject),
     "Email body": text(l.draft?.body),
     "Email quality": emailQualityOf(l),
     "Gmail draft link": text(l.gmailLink),
     "Mailbox": text(l.mailbox),
+    "Model used": modelUsedText(l.models),
     "Cost (USD)": l.costUsd == null ? "" : l.costUsd.toFixed(4),
   };
 }

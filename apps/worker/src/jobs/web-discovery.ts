@@ -153,7 +153,7 @@ export async function discoverFromWeb(ctx: WorkerCtx, campaign: Campaign, batch:
   }
 
   const search = makeSpender(ctx, { campaignId: campaign.id, leadId: null, jobId: job.jobId, step: "webDiscovery" });
-  const offer = await offerOf(ctx, campaign.offer_id);
+  const offer = await offerOf(ctx, campaign);
   const seen = new Set<string>();
   const picks: { person: ApolloPerson; domain: string; name: string; query: string; screen: ScreenResult }[] = [];
 

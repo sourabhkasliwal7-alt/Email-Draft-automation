@@ -33,6 +33,7 @@ const drafted: RawReportLead = {
   draft: { subject: "Quick idea", body_text: "=SUM(1,1)\nSecond line, with a comma", claim_check: { attempts: 2 }, gmail_draft_id: "r-1", gmail_message_id: "18abc" },
   mailbox: "me@gmail.com",
   offerName: "White-label development",
+  offerReason: 'Matched "agency" in the business type.',
   caseStudy: "Agency overflow case",
   costUsd: 0.0123,
   cutoff: 55,
@@ -57,6 +58,7 @@ describe("toReportLead", () => {
       components: { fit: 15, role: 20, size: 10, trigger: 25, data: 12 },
       score: 82,
       offerName: "White-label development",
+      offerReason: 'Matched "agency" in the business type.',
       caseStudy: "Agency overflow case",
       mailbox: "me@gmail.com",
       costUsd: 0.0123,
@@ -71,6 +73,14 @@ describe("toReportLead", () => {
     expect(odd).toMatchObject({ quickCheck: null, pagesVisited: [], hiringRoles: [], factsGiven: null, components: null, draft: null });
     // a draft that was never saved in Gmail has no link
     expect(toReportLead({ ...drafted, draft: { subject: "s", body_text: "b", claim_check: {}, gmail_draft_id: null } }).gmailLink).toBeNull();
+  });
+
+  it("carries the data problems of the lead (the 'Data flags' column) and the stored email status as it is", () => {
+    const flagged = toReportLead({ ...drafted, lead: { ...drafted.lead, score_components: { ...(drafted.lead.score_components as object), data_flags: ["email domain mismatch", 5] } }, contact: { ...drafted.contact, email_status: "risky" } });
+    expect(flagged.dataFlags).toEqual(["email domain mismatch"]);
+    expect(flagged.emailStatus).toBe("risky");
+    expect(toReportLead(drafted).dataFlags).toEqual([]);
+    expect(toReportLead({ lead: { status: "scored", score_components: { data_flags: "x" } } }).dataFlags).toEqual([]);
   });
 });
 

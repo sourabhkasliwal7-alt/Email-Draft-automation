@@ -27,7 +27,7 @@ describe.skipIf(!enabled)("quick check, re-check and run report data (mock adapt
   async function mkCampaign(name: string) {
     const { data } = await db
       .from("campaigns")
-      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 6, target_roles: ["COO"], icp: { leadSource: "csv", requireEmail: true, industries: ["software", "saas"] } as Json })
+      .insert({ name: `${tag} ${name}`, offer_id: offerId, offer_ids: [offerId], inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 6, target_roles: ["COO"], icp: { leadSource: "csv", requireEmail: true, industries: ["software", "saas"] } as Json })
       .select("id")
       .single();
     return data!.id;

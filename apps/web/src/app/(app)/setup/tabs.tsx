@@ -4,7 +4,7 @@ import { SETUP_TABS, setupTabHref, type SetupTab, type TabMark } from "@/lib/set
 import { cn } from "@/lib/utils";
 
 /**
- * The seven tabs of Setup, numbered "1 Gmail ... 7 Advanced". Each is a link, so the address always shows where you are.
+ * The tabs of Setup, numbered "1 Gmail ... 8 Advanced". Each is a link, so the address always shows where you are.
  * A green tick = this part is complete, an orange dot = it needs action, nothing = optional or technical.
  */
 export function SetupTabs({ active, marks }: { active: SetupTab; marks: Record<SetupTab, TabMark> }) {

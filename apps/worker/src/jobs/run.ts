@@ -1,11 +1,15 @@
 import {
   ATTENTION_REASONS,
+  EMAIL_DOMAIN_MISMATCH,
   approveTop,
   bracketNote,
   dailyTarget,
+  emailDomainMismatch,
   icpSchema,
+  isNeverFetched,
   istDayStartIso,
   leadsToFind,
+  normalizeEmailStatus,
   sourcesOf,
   validateWorkflowConfig,
   type SkipReason,
@@ -136,6 +140,7 @@ async function cleanAndSelect(ctx: WorkerCtx, campaign: Campaign, cfg: WorkflowC
     if (!c.email_lower && !hasApolloId.has(l.contact_id)) { await skip(l, "no-email", "no email in the CSV and no Apollo id to reveal one"); continue; }
     if (!domain) { await skip(l, "no-data", "no company website"); continue; }
     if (excludedDomains.some((d) => domain === d || domain.endsWith(`.${d}`))) { await skip(l, "excluded", "domain"); continue; }
+    if (isNeverFetched(`https://${domain}/`, { linkedinEnabled: cfg.linkedin_enabled })) { await skip(l, "excluded", "website is LinkedIn or Crunchbase (never read)"); continue; }
     if (c.job_title && excludedTitles.some((t) => c.job_title!.toLowerCase().includes(t))) { await skip(l, "excluded", "title"); continue; }
     if (cfg.countries_in_scope.length && c.country && !cfg.countries_in_scope.some((x) => x.toLowerCase() === c.country!.toLowerCase())) { await skip(l, "excluded", "country"); continue; }
     if (c.company_id && (recentCompanies.has(c.company_id) || seenCompanies.has(c.company_id))) { await skip(l, "same-company"); continue; }
@@ -180,6 +185,13 @@ async function recordStepFailure(db: WorkerCtx["db"], leadId: string, step: stri
   if (!lead) return;
   must(await db.from("campaign_leads").update({ reason_codes: ["step-failed", `${step}: ${message}`.slice(0, 400)] }).eq("id", leadId), "save step failure");
   await leadEvent(db, lead, "step_failed", { step, error: message });
+}
+
+/** Adds a data-problem note to the lead (score_components.data_flags), once. It is shown in the run report; it never stops the lead. */
+export async function flagLead(db: WorkerCtx["db"], lead: { id: string; score_components: unknown }, flag: string) {
+  const sc = ((lead.score_components as Record<string, unknown> | null) ?? {}) as { data_flags?: string[] };
+  if (sc.data_flags?.includes(flag)) return;
+  must(await db.from("campaign_leads").update({ score_components: { ...sc, data_flags: [...(sc.data_flags ?? []), flag] } as unknown as Json }).eq("id", lead.id), "flag lead");
 }
 
 // ---------------------------------------------------------------- the run
@@ -257,7 +269,9 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
     // ------------------------------------------------ 1. today's number, search and clean (once per run)
     if (!(batch.totals as { leadIds?: string[] } | null)?.leadIds) {
       const { target, reasons } = await computeTarget(ctx, campaign, cfg, dryRun);
-      await patchTotals(db, batch.id, { target, dryRun }, { step: "target", count: target, note: reasons.join("; ") || (dryRun ? "dry run: no credits and no Gmail drafts" : undefined) });
+      // the models this run uses, for the run report ("Model used"); the demo model is named as such
+      const modelOf = (m: string) => (ctx.modes.llm === "live" ? m : "mock (demo)");
+      await patchTotals(db, batch.id, { target, dryRun, models: { quick_check: modelOf(cfg.model_screen), facts: modelOf(cfg.model_extract), writing: modelOf(cfg.model_write), checker: modelOf(cfg.model_screen) } }, { step: "target", count: target, note: reasons.join("; ") || (dryRun ? "dry run: no credits and no Gmail drafts" : undefined) });
       if (target <= 0) {
         await db.from("pipeline_batches").update({ status: "completed", finished_at: new Date().toISOString(), fanout_done: true }).eq("id", batch.id);
         return { target: 0, reasons };
@@ -388,12 +402,16 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
           if (ROLE_LOCALS.has(local)) return skipLead(db, lead, "role-address", local);
           const fresh = await loadLead(db, id);
           const c = fresh.contacts!;
-          let status = c.email_status;
+          // one vocabulary: a catch-all address is "risky" (it proves nothing), only a checked address is "valid", anything else stays "unknown"
+          let status: string = normalizeEmailStatus(c.email_status);
+          if (status !== c.email_status) must(await db.from("contacts").update({ email_status: status }).eq("id", c.id), "save email status");
+          // a work address on a different website than the company's is flagged for the person reading the report; it does not stop the lead
+          if (emailDomainMismatch(r.email, c.companies?.domain)) await flagLead(db, fresh, EMAIL_DOMAIN_MISMATCH);
           if (status === "unknown" && !cfg.skip_verification) {
             const v = await spend("verifier", "verify", () => ctx.adapters.verifier.verify(r.email));
-            status = v.status;
-            must(await db.from("contacts").update({ email_status: v.status }).eq("id", c.id), "save email status");
-            if (v.status === "invalid") await db.from("suppression").insert({ email_lower: r.email.toLowerCase(), scope: "global", reason: "invalid email (verifier)", source: "verifier" });
+            status = normalizeEmailStatus(v.status);
+            must(await db.from("contacts").update({ email_status: status }).eq("id", c.id), "save email status");
+            if (status === "invalid") await db.from("suppression").insert({ email_lower: r.email.toLowerCase(), scope: "global", reason: "invalid email (verifier)", source: "verifier" });
           }
           // with "Skip email verification" (testing only) an unchecked address goes on; a known-bad one never does
           if (status === "invalid" || (status !== "valid" && !cfg.allow_risky && !(cfg.skip_verification && status === "unknown"))) return skipLead(db, lead, "bad-email", status);
@@ -407,7 +425,6 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
 
       // ------------------------------------------------ 6. write, check, Gmail draft
       const inbox = campaign.inbox_id ? (await db.from("inboxes").select("display_name, email").eq("id", campaign.inbox_id).maybeSingle()).data : null;
-      const sender = (inbox?.display_name ?? inbox?.email?.split("@")[0] ?? "").trim().split(/\s+/)[0] ?? "";
       const seen: { subject: string; opening: string }[] = [];
       await mapLimit(ids, 1, shouldStop, (id) =>
         safely({ id }, "write", async () => {
@@ -421,7 +438,7 @@ export async function workflowRunJob(ctx: WorkerCtx, payload: RunPayload, job: J
             if (!lead.contacts!.first_name || !company) return skipLead(db, lead, "no-data", "no first name");
             const facts = await loadFacts(ctx, company.id, cfg.developer_keywords);
             if (!facts.length) return skipLead(db, lead, "no-verified-fact");
-            const w = await writeEmail(ctx, spendFor(lead, "write"), cfg, lead, facts, sender || "Sourabh", seen);
+            const w = await writeEmail(ctx, spendFor(lead, "write"), cfg, lead, facts, { displayName: inbox?.display_name ?? null, email: inbox?.email ?? null }, seen);
             if (!w.ok) {
               quality.failed++;
               return skipLead(db, lead, "draft-failed", w.problems.join(" | ").slice(0, 600));

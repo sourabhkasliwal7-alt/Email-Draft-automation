@@ -1,4 +1,4 @@
-import { normalizeDomain, normalizeEmail } from "@outreach/core";
+import { EMAIL_DOMAIN_MISMATCH, emailDomainMismatch, normalizeDomain, normalizeEmail } from "@outreach/core";
 import type { CanonicalField, Mapping } from "./mapping";
 
 export type EmailStatus = "unknown" | "valid" | "risky" | "invalid" | "catch_all";
@@ -23,6 +23,8 @@ export interface NormalizedRow {
   warnings: string[];
   /** email was present in the file but is not a valid address */
   emailInvalid: boolean;
+  /** data problems found in the row, saved on the lead and shown in the run report (for example "email domain mismatch") */
+  data_flags: string[];
 }
 
 /** Addresses that must never be treated as a company's domain. */
@@ -72,7 +74,8 @@ export function parseEmailStatus(input: string): EmailStatus {
   const v = collapse(input).toLowerCase().replace(/[\s_-]+/g, " ");
   if (!v) return "unknown";
   if (["verified", "valid", "deliverable", "ok", "good"].includes(v)) return "valid";
-  if (["catch all", "catchall", "accept all", "accept_all"].includes(v)) return "catch_all";
+  // a catch-all domain accepts any address, so nothing proves this one exists: it is "risky", never "valid"
+  if (["catch all", "catchall", "accept all", "accept_all"].includes(v)) return "risky";
   if (["guessed", "risky", "unknown", "likely to engage", "unverified"].includes(v)) return v === "unknown" ? "unknown" : "risky";
   if (["invalid", "bounced", "undeliverable", "bad", "hard bounce"].includes(v)) return "invalid";
   return "unknown";
@@ -146,6 +149,12 @@ export function normalizeRow(raw: Record<string, string>, mapping: Mapping, defa
       domain = null;
     }
   }
+  // a work address that belongs to a different website than the one the company is listed with is a data problem (the lead is flagged, not dropped)
+  const dataFlags: string[] = [];
+  if (domain && emailLower && emailDomainMismatch(emailLower, domain)) {
+    dataFlags.push(EMAIL_DOMAIN_MISMATCH);
+    warnings.push(`Email domain mismatch: ${emailLower.split("@")[1]} is not the company website ${domain}.`);
+  }
   if (!domain && emailLower) {
     const d = emailLower.split("@")[1]!;
     if (!isNonCompanyDomain(d)) domain = d;
@@ -177,6 +186,7 @@ export function normalizeRow(raw: Record<string, string>, mapping: Mapping, defa
     lead_source: orNull(collapse(get("lead_source"))) ?? defaults.leadSource ?? null,
     warnings,
     emailInvalid,
+    data_flags: dataFlags,
   };
 }
 

@@ -1,10 +1,11 @@
-/** Setup is one page with tabs: /setup?tab=gmail|apollo|campaigns|offers|footer|schedule|advanced (default gmail). */
+/** Setup is one page with tabs: /setup?tab=gmail|apollo|campaigns|offers|footer|style|schedule|advanced (default gmail). */
 export const SETUP_TABS = [
   { key: "gmail", label: "Gmail" },
   { key: "apollo", label: "Apollo" },
   { key: "campaigns", label: "Campaigns" },
   { key: "offers", label: "Offers" },
   { key: "footer", label: "Email footer" },
+  { key: "style", label: "Email style" },
   { key: "schedule", label: "Schedule" },
   { key: "advanced", label: "Advanced" },
 ] as const;
@@ -28,6 +29,7 @@ export const SETUP_INSTRUCTIONS: Record<SetupTab, string> = {
   campaigns: "A campaign says who to write to, which offer to write about and which mailbox saves the drafts.",
   offers: "An offer is what you sell. Emails may only make the claims and quote the numbers you list here.",
   footer: "The footer goes at the bottom of every email: where you are and how to opt out.",
+  style: "How the emails sound: the tools named for each industry, your best sample emails, and how they are signed.",
   schedule: "Let a run start by itself on weekdays, or press Start run on Home whenever you want.",
   advanced: "Technical settings. The defaults work; change them only if you know why.",
 };
@@ -56,6 +58,7 @@ export function setupTabMarks(f: SetupFacts): Record<SetupTab, TabMark> {
     campaigns: yes(f.campaigns > 0),
     offers: yes(f.offers > 0),
     footer: yes(f.footerSet),
+    style: "none",
     schedule: f.scheduleOn ? "done" : "none",
     advanced: "none",
   };

@@ -34,10 +34,24 @@ export interface RawReportLead {
   draft?: { subject: string; body_text: string; claim_check?: unknown; gmail_draft_id?: string | null; gmail_message_id?: string | null } | null;
   mailbox?: string | null;
   offerName?: string | null;
+  offerReason?: string | null;
   caseStudy?: string | null;
   costUsd?: number | null;
+  /** the run's models (pipeline_batches.totals.models) */
+  models?: unknown;
   cutoff?: number | null;
   wouldApprove?: boolean;
+}
+
+/** The models of the steps this lead went through. Runs from before the models were recorded give empty cells. */
+function modelsOfLead(models: unknown, went: { screened: boolean; researched: boolean; wrote: boolean }): RunReportLead["models"] {
+  const m = obj(models);
+  return {
+    quickCheck: went.screened ? str(m.quick_check) : null,
+    facts: went.researched ? str(m.facts) : null,
+    writing: went.wrote ? str(m.writing) : null,
+    checker: went.wrote ? str(m.checker) : null,
+  };
 }
 
 /** One database lead -> one report row's data. Pure: no database, no clock. */
@@ -60,6 +74,7 @@ export function toReportLead(raw: RawReportLead): RunReportLead {
     jobTitle: c.job_title ?? null,
     email: c.email ?? null,
     emailStatus: c.email_status ?? null,
+    dataFlags: strs(sc.data_flags),
     profileUrl: c.profile_url ?? null,
     companyName: co.name ?? c.company_name ?? null,
     domain: co.domain ?? null,
@@ -85,11 +100,13 @@ export function toReportLead(raw: RawReportLead): RunReportLead {
     reasonCodes: raw.lead.reason_codes ?? [],
     wouldApprove: raw.wouldApprove ?? false,
     offerName: raw.offerName ?? null,
+    offerReason: raw.offerReason ?? null,
     caseStudy: raw.caseStudy ?? null,
     draft: raw.draft ? { subject: raw.draft.subject, body: raw.draft.body_text, attempts } : null,
     gmailLink: raw.draft?.gmail_draft_id && raw.mailbox ? gmailDraftUrl(raw.mailbox, raw.draft.gmail_message_id) : null,
     mailbox: raw.mailbox ?? null,
     costUsd: raw.costUsd ?? null,
+    models: modelsOfLead(raw.models, { screened: Boolean(fit), researched: Boolean(research.pages_visited) || given !== null, wrote: Boolean(raw.draft) || raw.lead.reason_codes?.[0] === "draft-failed" }),
   };
 }
 
@@ -124,7 +141,7 @@ export async function loadRunReportLeads(supabase: Db, batchId: string): Promise
     cutoff = parseWorkflowConfig(setting?.value).approve_threshold;
   }
 
-  type LeadRow = { id: string; contact_id: string; offer_id: string | null; case_study_id: string | null; status: string; contacts: (NonNullable<RawReportLead["contact"]> & { company_id?: string | null; companies?: RawReportLead["company"] }) | null } & RawReportLead["lead"];
+  type LeadRow = { id: string; contact_id: string; offer_id: string | null; offer_reason: string | null; case_study_id: string | null; status: string; contacts: (NonNullable<RawReportLead["contact"]> & { company_id?: string | null; companies?: RawReportLead["company"] }) | null } & RawReportLead["lead"];
   const leadRows: LeadRow[] = [];
   for (const part of chunks(ids)) {
     const { data } = await supabase.from("campaign_leads").select("*, contacts(*, companies(*))").in("id", part);
@@ -182,8 +199,10 @@ export async function loadRunReportLeads(supabase: Db, batchId: string): Promise
       draft: d ?? null,
       mailbox: d?.inbox_id ? (inboxes.get(d.inbox_id)?.email ?? null) : null,
       offerName: l.offer_id ? (offers.get(l.offer_id)?.name ?? null) : null,
+      offerReason: l.offer_reason ?? null,
       caseStudy: l.case_study_id ? (studies.get(l.case_study_id)?.title ?? null) : null,
       costUsd: cost.has(l.id) ? cost.get(l.id)! : null,
+      models: totals.models,
       cutoff,
       wouldApprove: wouldApprove.has(l.id),
     });
@@ -213,6 +232,13 @@ export interface RunLeadLine {
   reason: string | null;
   status: string;
   reasonCodes: string[];
+  offerName: string | null;
+  offerReason: string | null;
+  /** score_components.data_flags contains "email domain mismatch" */
+  emailMismatch: boolean;
+  /** contacts.email_status as stored (null when the lead has no person yet) */
+  emailStatus: string | null;
+  hasEmail: boolean;
 }
 
 /** The first `limit` leads of a run, with their quick-check result. `total` is how many the run has. */
@@ -220,7 +246,7 @@ export async function loadRunLeadLines(supabase: Db, totals: unknown, limit = 10
   const ids = runLeadIds(totals);
   const lines: RunLeadLine[] = [];
   for (const part of chunks(ids.slice(0, limit))) {
-    const { data } = await supabase.from("campaign_leads").select("id, status, reason_codes, score_components, contacts(full_name, company_name, companies(name, domain))").in("id", part);
+    const { data } = await supabase.from("campaign_leads").select("id, status, reason_codes, score_components, offer_reason, offers(name), contacts(full_name, company_name, email, email_status, companies(name, domain))").in("id", part);
     for (const l of data ?? []) {
       const screen = obj(obj(l.score_components).screen);
       lines.push({
@@ -232,6 +258,11 @@ export async function loadRunLeadLines(supabase: Db, totals: unknown, limit = 10
         reason: str(screen.reason),
         status: l.status,
         reasonCodes: l.reason_codes,
+        offerName: l.offers?.name ?? null,
+        offerReason: l.offer_reason ?? null,
+        emailStatus: l.contacts?.email_status ?? null,
+        hasEmail: Boolean(l.contacts?.email),
+        emailMismatch: strs(obj(l.score_components).data_flags).includes("email domain mismatch"),
       });
     }
   }

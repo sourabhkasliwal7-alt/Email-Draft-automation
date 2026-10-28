@@ -9,9 +9,34 @@
 | CORE | Core automatic flow per docs/SRS.docx (mock mode) | DONE in mock mode (see below) | 2026-10-27 |
 | LIVE-1 | CSV runs, Gmail connection, live Claude/Serper/ZeroBounce/fetcher | built; adapters stay on mock until you switch them | 2026-10-27 |
 | LIVE-2 | Simple 4-page UI, Apollo as a main lead source, retry, email quality, gmail.modify label | built; Apollo needs your key | 2026-10-28 |
+| LIVE-5 | Research source rules, tools by industry, sample emails, reply-only soft ask, subject/sign-off rules, email status, import flags, retry failed drafts | built and tested on mock adapters | 2026-10-28 |
 | LIVE-4 | Quick check judges target + offer, Jina Reader fallback, Re-check skipped leads, run report CSV | built and tested on mock adapters | 2026-10-28 |
 | LIVE-3 | Web discovery (Google) as a third lead source | built and tested on mock adapters; needs your Serper key and Apollo for contacts | 2026-10-28 |
+| LIVE-6 | Several offers per campaign, chosen per lead by rules (SRS E7) | built and tested on mock adapters; one optional SQL file for the owner (BLOCKERS M2) | 2026-10-28 |
 | 4-13 | Replaced by the single-agent plan: the core flow first, everything else under "Later" | see "Later" | |
+
+## LIVE-6 - several offers per campaign, chosen by rules (2026-10-28)
+
+SRS E7: the offer and the case study are chosen from lists by rules (business type, trigger type), never by the model.
+- **Campaign form**: "Offers for this campaign" (tick one or more, at least one) and a "Default offer" chosen among the ticked ones. `campaigns.offer_ids` holds the list; `campaigns.offer_id` stays and is the default. Existing campaigns: the migration copied their offer into `offer_ids`, so they keep working with that one offer.
+- **Offer form**: "Fits these businesses" (`offers.match_terms`: business types, industries, keywords) and optional "Fits best when ..." trigger types (`offers.trigger_types`: hiring developers, funding, launch, expansion, tech change, award, public talk).
+- **The rules** (`packages/core/src/offers.ts`, pure code, same lead = same offer): one offer on the campaign = that offer. Otherwise an offer qualifies when one of its terms appears (whole words, capitals and plural endings ignored) in the lead's business type (3 points), industry (2) or company description (1); an offer with no terms but with trigger types qualifies when the lead's trigger is one of them; a matching trigger adds 2 to an offer that qualifies by terms. Highest total wins; a tie goes to the default offer, else the first listed. Nothing qualifies: the default offer (an archived or missing default falls back to the first live offer). The case study of the chosen offer is then picked the same way from its industries; none fits = no case study.
+- **Stored per lead**: `campaign_leads.offer_id`, `case_study_id` and the new `offer_reason` (plain words), written when the writing step starts, so a lead whose email later fails its checks still shows its offer.
+- **Shown**: run page (Offer column with the reason), run report CSV (columns "Offer" and "Why this offer"), Setup > Campaigns (all offers, default marked).
+- The quick check (and web discovery) judges a company against all of the campaign's offers.
+- Migration `20261028073329_multi_offer.sql` (applied through the MCP). A second, optional file (a trigger that keeps the default inside `offer_ids`) was declined twice and is in `supabase/manual/multi_offer_default_trigger.sql`, see BLOCKERS M2. Nothing depends on it: the form and the worker write both columns.
+- Tests: core `offers.test.ts` (matching, ties, fallbacks, determinism), schema tests (offer required, default must be ticked), worker `offers.integration.test.ts` (real database: rules, default fallback, legacy campaign, archived offer, offer stored before the email is written), e2e `offer-select.spec.ts` (tick several, default follows, save, reopen, offer rules form).
+
+## LIVE-5 - research sources, email rules, email status (2026-10-28)
+
+From the reports of two Apollo CSV runs (24 US healthtech CTOs).
+- **Research reads only pages about the lead's company.** LinkedIn and Crunchbase are never fetched (fetcher, research and the run's clean step refuse them; a lead whose "website" is LinkedIn/Crunchbase is skipped as excluded). Search hits are kept only when they are on the company's own domain, or are press whose title/snippet names the exact company AND its domain; other companies' domains (look-alike names), job boards, review sites, directories and social sites are dropped. The search query now includes the domain. A page that a redirect turned into another company's site is not used. Facts saved by earlier versions from other sites (stored as "news" without the check) are ignored; vetted press is stored as source type "web".
+- **Tools by industry** (SRS 8.1): a row is picked by the lead's business type OR industry (several comma-separated keywords per row, the most specific wins, else the default row). **Sample emails**: up to 5, now in the writer's system text (the same for every lead, so it can be cached). Both are edited in Setup > Email style.
+- **Email rules** (code checks, not loosened): the soft ask must say reply ("Happy to share a short example if useful, just reply.") and never asks the lead to send, share, attach or fill in anything (W7); the subject never contains the internal offer name or two words in a row from it (W5); the sign-off is the mailbox display name (a person) and the company once, never the company twice (W9, `sender_company` setting, default Nuance Infotech); Setup warns when a mailbox display name is just the company name.
+- **Email status**: one vocabulary (unknown / valid / risky / invalid). Catch-all (Apollo/CSV or the verifier) is stored as risky; valid only when a source or the verifier checked it. Older catch_all rows are read as risky. Risky addresses are not written to unless "allow risky" is on.
+- **Data problems at import**: an email at a different website than the company's is flagged "email domain mismatch" on the lead (import notes, the run report column "Data flags", and again after a reveal).
+- **Retry all failed drafts** (Drafts > Needs attention): puts every draft-failed lead back at the writing step only.
+- Tests: core `research-sources.test.ts` and extended `workflow.test.ts`; importer status/flag tests; adapters fetcher block; worker `quality.integration.test.ts`.
 
 ## LIVE-4 - quick check fixes, re-check button, run report (2026-10-28)
 

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { isTestActive, latestApolloFinds, latestScreenRechecks, latestWebFinds, type FindRow, type RecheckRow, type WebFindCompany, type WebFindRow } from "@/lib/adapter-tests";
 import { requireUser } from "@/lib/auth";
+import { EMAIL_MISMATCH_LABEL, emailStatusWords, hasEmailMismatch } from "@/lib/email-style";
 import { gmailDraftUrl, plainLeadStatus } from "@/lib/plain";
 import { RECHECK_REASONS, quickCheckOf, recheckCounts, recheckLine } from "@/lib/quick-check";
 import { createClient } from "@/lib/supabase/server";
@@ -53,7 +54,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
   let query = supabase
     .from("campaign_leads")
-    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, lead_source, source_detail, score_components, campaigns(name), contacts(full_name, job_title, email, company_name, companies(name, domain))")
+    .select("id, status, next_action, reason_codes, lead_score, created_at, campaign_id, lead_source, source_detail, score_components, campaigns(name), contacts(full_name, job_title, email, email_status, company_name, companies(name, domain))")
     .order("created_at", { ascending: false })
     .limit(200);
   if (campaignFilter) query = query.eq("campaign_id", campaignFilter);
@@ -309,6 +310,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                             <div className="text-xs text-muted-foreground">
                               {l.contacts?.job_title} {l.contacts?.email ? `· ${l.contacts.email}` : ""}
                             </div>
+                            {l.contacts?.email && (
+                              <div className="mt-1 flex flex-wrap gap-1" data-testid="lead-email-status">
+                                <Badge tone={emailStatusWords(l.contacts.email_status).tone}>{emailStatusWords(l.contacts.email_status).label}</Badge>
+                                {hasEmailMismatch(l.score_components) && <Badge tone="amber">{EMAIL_MISMATCH_LABEL}</Badge>}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-3">
                             <div>{company ?? "-"}</div>

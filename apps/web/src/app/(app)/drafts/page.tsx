@@ -6,15 +6,16 @@ import { EmptyState, PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
-import { DRAFT_NOTICES } from "@/lib/notices";
+import { EMAIL_MISMATCH_LABEL, emailStatusWords, failedDraftIds, hasEmailMismatch } from "@/lib/email-style";
+import { draftNotice } from "@/lib/notices";
 import { NO_CONTACT_ADVICE, gmailDraftUrl, gmailDraftsUrl, plainDetail, plainReason } from "@/lib/plain";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
-import { AttentionButtons } from "./forms";
+import { AttentionButtons, RetryFailedDraftsButton } from "./forms";
 
-export default async function DraftsPage({ searchParams }: { searchParams: Promise<{ tab?: string; notice?: string }> }) {
+export default async function DraftsPage({ searchParams }: { searchParams: Promise<{ tab?: string; notice?: string; n?: string }> }) {
   const user = await requireUser("drafts.view");
-  const { tab, notice } = await searchParams;
+  const { tab, notice, n } = await searchParams;
   const supabase = await createClient();
   const canAttention = can(user.role, "attention.view");
   const showAttention = canAttention && tab === "attention";
@@ -24,19 +25,20 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
   const { data: attentionRows } = canAttention
     ? await supabase
         .from("campaign_leads")
-        .select("id, status, reason_codes, lead_score, updated_at, lead_source, source_detail, campaigns(name), contacts(full_name, job_title, company_name, companies(name, domain))")
+        .select("id, status, reason_codes, lead_score, updated_at, lead_source, source_detail, score_components, campaigns(name), contacts(full_name, job_title, company_name, companies(name, domain))")
         .overlaps("reason_codes", [...ATTENTION_REASONS])
         .order("updated_at", { ascending: false })
         .limit(200)
     : { data: [] };
   const attention = (attentionRows ?? []).filter((l) => ATTENTION_REASONS.includes(l.reason_codes[0] as SkipReason));
+  const failedDrafts = failedDraftIds(attention).length;
 
   // gmail_message_id is newer than the generated types: read whole rows and narrow them here
   const { data: draftRows } = showAttention
     ? { data: [] }
     : await supabase
         .from("email_drafts")
-        .select("*, inboxes(email), campaign_leads!inner(lead_score, campaigns(name), contacts(full_name, email, job_title, company_name))")
+        .select("*, inboxes(email), campaign_leads!inner(lead_score, score_components, campaigns(name), contacts(full_name, email, email_status, job_title, company_name))")
         .not("gmail_draft_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(100);
@@ -49,7 +51,7 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
     gmail_draft_id: string | null;
     gmail_message_id?: string | null;
     inboxes: { email: string } | null;
-    campaign_leads: { lead_score: number | null; campaigns: { name: string } | null; contacts: { full_name: string | null; email: string | null; job_title: string | null; company_name: string | null } | null };
+    campaign_leads: { lead_score: number | null; score_components: unknown; campaigns: { name: string } | null; contacts: { full_name: string | null; email: string | null; email_status: string | null; job_title: string | null; company_name: string | null } | null };
   }[];
 
   const firstMailbox = drafts.find((d) => d.inboxes?.email)?.inboxes?.email;
@@ -82,10 +84,10 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
           )}
         </div>
 
-        {showAttention && notice && DRAFT_NOTICES[notice] && (
+        {showAttention && draftNotice(notice, n) && (
           <p role="status" data-testid="notice" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {DRAFT_NOTICES[notice]}
+            {draftNotice(notice, n)}
           </p>
         )}
 
@@ -105,6 +107,10 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
                           <p className="text-base font-semibold">{d.subject}</p>
                           <p className="text-sm text-muted-foreground">
                             To {c?.full_name} ({c?.job_title}) &lt;{c?.email}&gt;
+                          </p>
+                          <p className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="draft-email-status">
+                            <Badge tone={emailStatusWords(c?.email_status).tone}>{emailStatusWords(c?.email_status).label}</Badge>
+                            {hasEmailMismatch(d.campaign_leads.score_components) && <Badge tone="amber">{EMAIL_MISMATCH_LABEL}</Badge>}
                           </p>
                           <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
                             <Badge tone="green">Score {d.campaign_leads.lead_score ?? "-"}</Badge>
@@ -132,6 +138,8 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
         ) : !attention.length ? (
           <EmptyState icon={<CheckCircle2 className="size-5" aria-hidden />}>Nothing needs attention. Leads that could not get a draft show up here with the reason and what to do.</EmptyState>
         ) : (
+          <div className="space-y-4">
+          {failedDrafts > 0 && act && <RetryFailedDraftsButton count={failedDrafts} />}
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[46rem] text-sm" data-testid="attention-table">
@@ -187,6 +195,11 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
                               {NO_CONTACT_ADVICE}
                             </div>
                           )}
+                          {hasEmailMismatch(l.score_components) && (
+                            <div className="mt-1" data-testid="attention-mismatch">
+                              <Badge tone="amber">{EMAIL_MISMATCH_LABEL}</Badge>
+                            </div>
+                          )}
                         </td>
                         <td className="px-5 py-3">{act && <AttentionButtons leadId={l.id} company={companyName} noContact={noContact} />}</td>
                       </tr>
@@ -196,6 +209,7 @@ export default async function DraftsPage({ searchParams }: { searchParams: Promi
               </table>
             </div>
           </Card>
+          </div>
         )}
       </div>
     </>

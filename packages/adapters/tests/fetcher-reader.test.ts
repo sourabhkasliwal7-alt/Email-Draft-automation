@@ -97,6 +97,19 @@ describe("live fetcher: Jina Reader fallback", () => {
     expect(readerCalls(calls)).toEqual([]);
   });
 
+  it("never reads LinkedIn or Crunchbase, not even through a redirect or the reader", async () => {
+    const { fetchImpl, calls } = net({ "acme.com/go": { status: 302, body: "" } }, { body: LONG });
+    const f = createLiveFetcher({ fetchImpl, resolve: resolvePublic });
+    for (const url of ["https://www.linkedin.com/company/acme", "https://uk.linkedin.com/in/x", "https://crunchbase.com/organization/acme", "https://www.crunchbase.com/"]) await expect(f.fetchPage(url), url).rejects.toThrow(/never read/);
+    expect(calls).toEqual([]); // nothing was requested, from the site or from the reader
+    const redirecting = net({ "acme.com/": { status: 302 } });
+    const viaRedirect = createLiveFetcher({
+      fetchImpl: (async (u: string) => (new URL(u).hostname === "acme.com" ? new Response("", { status: 302, headers: { location: "https://www.linkedin.com/company/acme" } }) : redirecting.fetchImpl(u))) as unknown as typeof fetch,
+      resolve: resolvePublic,
+    });
+    await expect(viaRedirect.fetchPage("https://acme.com/")).rejects.toThrow(/never read/);
+  });
+
   it("can be switched off", async () => {
     const { fetchImpl, calls } = net({ "acme.com/": { body: "<html><body></body></html>" } }, { body: LONG });
     const r = await createLiveFetcher({ fetchImpl, resolve: resolvePublic, reader: { enabled: false } }).fetchPage("https://acme.com/");

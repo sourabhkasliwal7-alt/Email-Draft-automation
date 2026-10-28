@@ -143,16 +143,12 @@ export function WritingRulesForm({ values }: { values: Record<string, string> })
     </Field>
   );
   return (
-    <SettingsCard testId="form-writing-rules" title="Writing and filtering rules" action={saveWritingRules} button="Save writing rules">
+    <SettingsCard testId="form-writing-rules" title="Filtering rules" hint="How the emails sound (style, tools, sample emails, words never to use) is on the Email style tab." action={saveWritingRules} button="Save rules">
       {(err) => (
         <>
-          {area(err, "style_guide", "Writing style", undefined, 3)}
-          {area(err, "tools_by_industry", "Tools sentence by industry", "One line each: keyword: sentence. A line starting with default: is the fallback.", 3)}
-          {area(err, "reference_emails", "Example emails to copy the voice of", "Separate several with a line containing only ---", 5)}
           <div className="grid gap-3 sm:grid-cols-2">
             {area(err, "excluded_domains", "Never write to these domains", "One per line")}
             {area(err, "excluded_titles", "Never write to these job titles", "One per line, part of a title is enough")}
-            {area(err, "banned_phrases", "Words and phrases never to use", "One per line")}
             {area(err, "countries_in_scope", "Only these countries", "One per line. Empty means all.")}
             {area(err, "holidays", "Days with no automatic run", "One date per line, YYYY-MM-DD")}
           </div>

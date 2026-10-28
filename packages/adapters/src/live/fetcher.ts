@@ -102,6 +102,10 @@ const WALL = /captcha|verify (that )?you are (a )?human|are you a robot|checking
 /** A refusal on our side (a local address, a bad protocol). Never retried through the reader. */
 class RefusedFetch extends Error {}
 
+/** Sites this engine never reads (SRS R10): LinkedIn and Crunchbase are not scraped, whatever a lead's website field or a redirect says. */
+const NEVER_FETCH = ["linkedin.com", "crunchbase.com"];
+export const isNeverFetchedHost = (host: string) => NEVER_FETCH.some((d) => host === d || host.endsWith(`.${d}`));
+
 export const JINA_READER_URL = "https://r.jina.ai/";
 /** a page with less readable text than this counts as "could not be read" (a script-only shell, a thin or empty page) */
 const THIN_TEXT = 200;
@@ -137,6 +141,7 @@ export function createLiveFetcher(opts: LiveFetcherOptions = {}): FetcherAdapter
   async function assertPublic(u: URL) {
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new RefusedFetch(`unsupported protocol ${u.protocol}`);
     const host = u.hostname.replace(/^\[|\]$/g, "");
+    if (isNeverFetchedHost(host.toLowerCase().replace(/^www\./, ""))) throw new RefusedFetch("this site is never read (LinkedIn and Crunchbase are not scraped)");
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) throw new RefusedFetch("refusing to fetch a local address");
     const addrs = isIP(host) ? [host] : await resolve(host);
     if (!addrs.length || addrs.some(isPrivateAddress)) throw new RefusedFetch("refusing to fetch a private or unresolvable address");

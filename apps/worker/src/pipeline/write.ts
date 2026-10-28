@@ -4,12 +4,16 @@ import {
   buildEmailCheckPrompt,
   buildWritePrompt,
   checkEmailCode,
+  chooseCaseStudyByRules,
+  chooseOfferByRules,
   draftKey,
   duplicateOf,
   emailCheckPasses,
   emailCheckSchema,
   firstSentence,
   parseJsonLoose,
+  senderIdentity,
+  type LeadSignals,
   toolsFor,
   withFooter,
   writeSchema,
@@ -27,15 +31,30 @@ type Paid = ReturnType<typeof import("../spend").makeSpender>;
 
 export const bodyHash = (subject: string, body: string) => sha256Hex(new TextEncoder().encode(`${subject}\n${body}`));
 
-/** The campaign's offer and the case study whose industries match the company (deterministic, no free text). */
+/** What the offer rules look at for one lead: the quick check's business type, the company's industry and description, and the best trigger. */
+export function leadSignals(lead: LeadBundle): LeadSignals {
+  const sc = (lead.score_components ?? {}) as { screen?: { business_type?: string }; trigger_type?: string };
+  const company = lead.contacts?.companies;
+  return { businessType: sc.screen?.business_type ?? lead.icp_segment ?? null, industry: company?.industry ?? null, about: company?.summary ?? null, triggerType: sc.trigger_type ?? null };
+}
+
+/**
+ * The offer for this lead, then the case study of that offer. Both are chosen by rules in code (packages/core/src/offers.ts), never by
+ * the model: the campaign's offers in the order they were ticked, the default offer when no rule matches, and the case study whose
+ * industries fit the company best.
+ */
 export async function chooseOffer(ctx: WorkerCtx, lead: LeadBundle) {
-  const offerId = lead.offer_id ?? lead.campaigns?.offer_id ?? null;
-  if (!offerId) return { offer: null, caseStudy: null };
-  const offer = must(await ctx.db.from("offers").select("id, name").eq("id", offerId).is("deleted_at", null).maybeSingle(), "load offer");
-  const studies = must(await ctx.db.from("case_studies").select("id, title, summary, allowed_numbers, industries").eq("offer_id", offerId).is("deleted_at", null), "load case studies");
-  const industry = (lead.contacts?.companies?.industry ?? "").toLowerCase();
-  const match = industry ? studies.find((s) => s.industries.some((i) => i.toLowerCase() === industry)) : undefined;
-  return { offer, caseStudy: match ?? null };
+  const campaign = lead.campaigns;
+  const ids = [...new Set([...(campaign?.offer_ids ?? []), ...(campaign?.offer_id ? [campaign.offer_id] : [])])];
+  if (!ids.length) return { offer: null, caseStudy: null, offerReason: "This campaign has no offer." };
+  const rows = must(await ctx.db.from("offers").select("id, name, match_terms, trigger_types").in("id", ids).is("deleted_at", null), "load offers");
+  const live = ids.flatMap((id) => rows.filter((r) => r.id === id));
+  const choice = chooseOfferByRules(live.map((o) => ({ id: o.id, name: o.name, matchTerms: o.match_terms, triggerTypes: o.trigger_types })), campaign?.offer_id ?? null, leadSignals(lead));
+  const offer = live.find((o) => o.id === choice.offerId) ?? null;
+  if (!offer) return { offer: null, caseStudy: null, offerReason: choice.reason };
+  const studies = must(await ctx.db.from("case_studies").select("id, title, summary, allowed_numbers, industries").eq("offer_id", offer.id).is("deleted_at", null).order("created_at"), "load case studies");
+  const picked = chooseCaseStudyByRules(studies.map((s) => ({ id: s.id, title: s.title, industries: s.industries })), leadSignals(lead));
+  return { offer, caseStudy: studies.find((s) => s.id === picked.caseStudyId) ?? null, offerReason: choice.reason };
 }
 
 export interface WrittenEmail {
@@ -46,6 +65,7 @@ export interface WrittenEmail {
   warnings: string[];
   attempts: number;
   offerId: string | null;
+  offerReason: string;
   caseStudyId: string | null;
 }
 
@@ -59,23 +79,27 @@ export async function writeEmail(
   cfg: WorkflowConfig,
   lead: LeadBundle,
   facts: Fact[],
-  senderFirstName: string,
+  sender: { displayName: string | null; email: string | null },
   seen: { subject: string; opening: string }[],
 ): Promise<{ ok: true; email: WrittenEmail } | { ok: false; problems: string[] }> {
   const contact = lead.contacts!;
   const company = contact.companies!;
-  const { offer, caseStudy } = await chooseOffer(ctx, lead);
+  const { offer, caseStudy, offerReason } = await chooseOffer(ctx, lead);
+  // recorded at once, so the run page and report show the choice even when the email later fails its checks
+  must(await ctx.db.from("campaign_leads").update({ offer_id: offer?.id ?? null, case_study_id: caseStudy?.id ?? null, offer_reason: offerReason }).eq("id", lead.id), "record the chosen offer");
   const businessType = (lead.score_components as { screen?: { business_type?: string } } | null)?.screen?.business_type ?? lead.icp_segment ?? "";
   const top = facts.slice(0, 3);
+  const who = senderIdentity({ displayName: sender.displayName, email: sender.email, company: cfg.sender_company });
   const wctx: WriteContext = {
-    firstName: contact.first_name ?? "", title: contact.job_title, company: company.name ?? company.domain, businessType, senderFirstName, offerName: offer?.name ?? null,
+    firstName: contact.first_name ?? "", title: contact.job_title, company: company.name ?? company.domain, businessType, senderFirstName: who.firstName, senderName: who.name, senderCompany: who.company, offerName: offer?.name ?? null,
     caseStudy: caseStudy ? { code: caseStudy.id, title: caseStudy.title, summary: caseStudy.summary, allowedNumbers: caseStudy.allowed_numbers as Record<string, number> } : null,
     facts: top.map((f) => ({ id: f.evidenceId, type: f.type, statement: f.statement, quote: f.quote, sourceUrl: f.url })),
-    tools: toolsFor(businessType, cfg.tools_by_industry),
+    tools: toolsFor(businessType, cfg.tools_by_industry, company.industry),
     config: { style_guide: cfg.style_guide, reference_emails: cfg.reference_emails, white_label_line: cfg.white_label_line, banned_phrases: cfg.banned_phrases },
   };
   const codeCtx = {
     facts: wctx.facts, firstName: wctx.firstName, company: wctx.company, caseStudyNumbers: Object.values(wctx.caseStudy?.allowedNumbers ?? {}), whiteLabelLine: cfg.white_label_line, bannedPhrases: cfg.banned_phrases,
+    offerName: offer?.name ?? null, senderName: who.name, senderCompany: who.company,
   };
 
   let feedback: string[] = [];
@@ -116,7 +140,7 @@ export async function writeEmail(
         ok: true,
         email: {
           subject: w.subject.trim(), body: withFooter(w.body, cfg.postal_address, cfg.optout_line), fact, checkTotal: Object.values(llm.scores).reduce((a, b) => a + b, 0), warnings: [], attempts: attempt,
-          offerId: offer?.id ?? null, caseStudyId: caseStudy?.id ?? null,
+          offerId: offer?.id ?? null, offerReason, caseStudyId: caseStudy?.id ?? null,
         },
       };
     }
@@ -145,7 +169,7 @@ export async function saveEmailDraft(ctx: WorkerCtx, lead: LeadBundle, e: Writte
       .single(),
     "save draft",
   );
-  must(await ctx.db.from("campaign_leads").update({ offer_id: e.offerId, case_study_id: e.caseStudyId }).eq("id", lead.id), "link offer to lead");
+  must(await ctx.db.from("campaign_leads").update({ offer_id: e.offerId, case_study_id: e.caseStudyId, offer_reason: e.offerReason }).eq("id", lead.id), "link offer to lead");
   return saved;
 }
 

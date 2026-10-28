@@ -1,13 +1,29 @@
 "use client";
 
+import { useState } from "react";
 import { Field, FormMessage, SelectInput, SubmitButton, TextInput, inputClass, useActionForm } from "@/components/form";
 import { Card } from "@/components/ui/card";
+import { mailboxNameWarning } from "@/lib/email-style";
 import { addInbox, saveInboxLimits } from "./actions";
 
+/** The sign-off uses the display name, so a name that is just the company is flagged while it is typed. */
+function NameWarning({ displayName, email, company }: { displayName: string; email?: string; company: string }) {
+  // a new mailbox without a name yet is not nagged until it has an address to check against
+  if (!displayName.trim() && email === "") return null;
+  const text = mailboxNameWarning({ displayName, email, company });
+  if (!text) return null;
+  return (
+    <p role="status" data-testid="mailbox-name-warning" className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 sm:col-span-full">
+      {text}
+    </p>
+  );
+}
+
 /** The small "Add mailbox" form. It appears when you press Add mailbox (or when there is no mailbox yet). */
-export function AddInboxForm() {
+export function AddInboxForm({ company = "Nuance Infotech" }: { company?: string }) {
   const { state, onSubmit: action, pending } = useActionForm(addInbox);
   const err = state.fieldErrors ?? {};
+  const [name, setName] = useState("");
   return (
     <Card id="add-mailbox" className="max-w-xl p-5">
       <form onSubmit={action} className="space-y-4" noValidate data-testid="form-add-mailbox">
@@ -16,9 +32,10 @@ export function AddInboxForm() {
           <Field label="Gmail address" name="email" error={err.email}>
             <TextInput name="email" type="email" />
           </Field>
-          <Field label="Display name" name="displayName" error={err.displayName} hint="Optional. Shown in your drafts.">
-            <TextInput name="displayName" />
+          <Field label="Display name" name="displayName" error={err.displayName} hint="A person's name, for example Sam Rivera. Emails are signed with it, then the company.">
+            <input id="displayName" name="displayName" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
           </Field>
+          {name.trim() !== "" && <NameWarning displayName={name} company={company} />}
         </div>
         <FormMessage state={state} />
         <SubmitButton pending={pending}>Add mailbox</SubmitButton>
@@ -29,9 +46,12 @@ export function AddInboxForm() {
 
 export function InboxLimitsForm({
   inbox,
+  company = "Nuance Infotech",
 }: {
-  inbox: { id: string; display_name: string | null; status: string; daily_draft_cap: number; daily_send_cap: number; min_seconds_between_sends: number };
+  inbox: { id: string; email?: string; display_name: string | null; status: string; daily_draft_cap: number; daily_send_cap: number; min_seconds_between_sends: number };
+  company?: string;
 }) {
+  const [name, setName] = useState(inbox.display_name ?? "");
   const { state, onSubmit: action, pending } = useActionForm(saveInboxLimits);
   const err = state.fieldErrors ?? {};
   const switchable = inbox.status === "active" || inbox.status === "paused" || inbox.status === "error";
@@ -40,7 +60,7 @@ export function InboxLimitsForm({
       <input type="hidden" name="id" value={inbox.id} />
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="Display name" name={`displayName-${inbox.id}`} error={err.displayName}>
-          <input id={`displayName-${inbox.id}`} name="displayName" defaultValue={inbox.display_name ?? ""} className={inputClass} />
+          <input id={`displayName-${inbox.id}`} name="displayName" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
         </Field>
         <Field label="Status" name={`status-${inbox.id}`} error={err.status} hint={switchable ? undefined : "Set by the Google connection"}>
           {switchable ? (
@@ -62,6 +82,7 @@ export function InboxLimitsForm({
         <input type="hidden" name="dailySendCap" value={inbox.daily_send_cap} />
         <input type="hidden" name="minSecondsBetweenSends" value={inbox.min_seconds_between_sends} />
       </div>
+      <NameWarning displayName={name} email={inbox.email ?? ""} company={company} />
       <FormMessage state={state} />
       <SubmitButton variant="outline" pending={pending}>
         Save limits

@@ -477,6 +477,77 @@ test("Drafts: Retry puts the lead back at the step that failed and carries on in
   expect(skipped).toMatchObject({ status: "disqualified", reason_codes: ["manual"] });
 });
 
+test("Drafts: one button writes every failed email again (writing step only) and joins the run that is going", async ({ page }) => {
+  const admin = adminClient();
+  const bulk = (await admin.from("campaigns").insert({ name: `itest ${E} bulk campaign`, inbox_id: ids.inbox, icp: { leadSource: "csv", requireEmail: true } }).select("id").single()).data!.id;
+  // a run is going, so nothing is started by this test
+  await admin.from("pipeline_batches").insert({ campaign_id: bulk, label: `${E} bulk running`, status: "running", estimate: { dryRun: false }, started_at: new Date(Date.now() - 3_600_000).toISOString(), totals: { target: 10, log: [] } });
+  const a = await mkLead("BulkA", { campaign: bulk, status: "disqualified", score: 71, reason_codes: ["draft-failed", "W4: link | W7: soft ask missing"] });
+  const b = await mkLead("BulkB", { campaign: bulk, status: "disqualified", score: 64, reason_codes: ["draft-failed", "W5: subject contains the internal offer name"] });
+  const other = await mkLead("BulkOther", { campaign: bulk, status: "disqualified", reason_codes: ["no-email", "no email in the CSV and no Apollo id to reveal one"], email: null });
+
+  await loginAs(page, "operator");
+  await page.goto("/drafts?tab=attention");
+  const button = page.getByTestId("retry-failed-drafts");
+  await expect(button).toContainText(/Retry all \d+ failed drafts?/);
+  await button.click();
+  await expect(page.getByRole("dialog")).toContainText("Only the writing step runs");
+  await page.getByTestId("confirm-yes").click();
+  await expect(page).toHaveURL(/notice=retry_drafts_running&n=\d+/);
+  await expect(page.getByTestId("notice")).toContainText("will be written again (writing step only)");
+
+  for (const id of [a, b]) {
+    const { data } = await admin.from("campaign_leads").select("status, next_action, reason_codes").eq("id", id).single();
+    expect(data).toEqual({ status: "approved", next_action: "draft", reason_codes: [] }); // back at the writing step, research and approval kept
+  }
+  const { data: untouched } = await admin.from("campaign_leads").select("status, reason_codes").eq("id", other).single();
+  expect(untouched).toMatchObject({ status: "disqualified", reason_codes: ["no-email", expect.any(String)] });
+  const { data: batches } = await admin.from("pipeline_batches").select("id").eq("campaign_id", bulk).in("status", ["running", "paused"]);
+  expect(batches).toHaveLength(1); // no second run
+});
+
+test("Leads: an email shows Verified, Risky or Not checked in plain words, and a different email domain is flagged", async ({ page }) => {
+  const admin = adminClient();
+  const contactOf = async (leadId: string) => (await admin.from("campaign_leads").select("contact_id").eq("id", leadId).single()).data!.contact_id;
+  await admin.from("contacts").update({ email_status: "valid" }).eq("id", await contactOf(leads.Ready!));
+  await admin.from("contacts").update({ email_status: "risky" }).eq("id", await contactOf(leads.Researched!));
+  await admin.from("campaign_leads").update({ score_components: { data_flags: ["email domain mismatch"] } }).eq("id", leads.Researched!);
+
+  await loginAs(page, "operator");
+  await page.goto("/leads");
+  const row = (key: string) => page.getByTestId("lead-row").filter({ hasText: `${key} ${E}` });
+  await expect(row("Ready").getByTestId("lead-email-status")).toContainText("Verified");
+  await expect(row("Researched").getByTestId("lead-email-status")).toContainText("Risky (catch-all or unverified)");
+  await expect(row("Researched").getByTestId("lead-email-status")).toContainText("Email domain mismatch");
+  await expect(row("Found").getByTestId("lead-email-status")).toContainText("Not checked");
+  await expect(row("Found").getByTestId("lead-email-status")).not.toContainText("Verified");
+});
+
+test("Setup > Email style: tools by industry rows with a tester, three to five sample emails, and the sign-off company", async ({ page }) => {
+  await loginAs(page, "admin");
+  await page.goto("/setup?tab=style");
+  const form = page.getByTestId("form-email-style");
+  await expect(form.getByTestId("tools-default")).toBeVisible(); // the default row is always there and has no remove button
+  await form.getByTestId("tools-add").click();
+  await form.getByLabel("Industry or keywords").first().fill("health, medical");
+  await form.getByLabel("Tools sentence").first().fill("We usually build those with FHIR-ready APIs.");
+  await form.getByLabel("Business type (from the quick check)").fill("healthtech platform");
+  await expect(form.getByTestId("tools-test-result")).toContainText("FHIR-ready APIs");
+  await form.getByLabel("Business type (from the quick check)").fill("logistics");
+  await expect(form.getByTestId("tools-test-result")).toContainText("default");
+
+  await form.getByTestId("sample-add").click();
+  await expect(form.getByTestId("sample-count")).toHaveText("0 of 3-5 recommended");
+  await form.getByLabel("Sample 1").fill("Hi Asha,\n\nSaw your React hiring.\n\nJust reply.");
+  await expect(form.getByTestId("sample-warning")).toContainText("Three to five good samples work best");
+  await form.getByLabel("Sign-off company").fill("Nuance Infotech");
+  await form.getByRole("button", { name: "Save email style" }).click();
+  await expect(form.getByTestId("form-message")).toHaveText("Email style saved.");
+  await page.reload();
+  await expect(page.getByTestId("form-email-style").getByLabel("Industry or keywords").first()).toHaveValue("health, medical");
+  await expect(page.getByTestId("form-email-style").getByLabel("Sample 1")).toHaveValue(/Saw your React hiring/);
+});
+
 test("Home: a run in progress is shown in plain words with its step, and can be cancelled", async ({ page }) => {
   await loginAs(page, "operator");
   await page.goto("/");
@@ -516,12 +587,12 @@ test("Setup shows the Apollo account section for an admin: key status, demo or l
   await expect(details).toContainText("Getting email addresses: not allowed. Your Apollo plan does not allow unlocking emails");
 });
 
-test("Setup is one page with seven numbered tabs, one section visible at a time", async ({ page }) => {
+test("Setup is one page with eight numbered tabs, one section visible at a time", async ({ page }) => {
   await loginAs(page, "admin");
   await page.goto("/setup");
   const tabs = await page.getByTestId("setup-tabs").getByRole("link").allInnerTexts();
-  expect(tabs.map((t) => t.replace(/\s+/g, " ").replace(/complete|needs action/g, "").trim())).toEqual(["1 Gmail", "2 Apollo", "3 Campaigns", "4 Offers", "5 Email footer", "6 Schedule", "7 Advanced"]);
-  const ids: Record<string, string> = { gmail: "mailboxes", apollo: "apollo", campaigns: "campaign", offers: "offer", footer: "footer", schedule: "schedule", advanced: "advanced" };
+  expect(tabs.map((t) => t.replace(/\s+/g, " ").replace(/complete|needs action/g, "").trim())).toEqual(["1 Gmail", "2 Apollo", "3 Campaigns", "4 Offers", "5 Email footer", "6 Email style", "7 Schedule", "8 Advanced"]);
+  const ids: Record<string, string> = { gmail: "mailboxes", apollo: "apollo", campaigns: "campaign", offers: "offer", footer: "footer", style: "style", schedule: "schedule", advanced: "advanced" };
   for (const [tab, id] of Object.entries(ids)) {
     await page.goto(`/setup?tab=${tab}`);
     await expect(page.locator(`#${id}`)).toHaveCount(1);

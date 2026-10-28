@@ -12,6 +12,9 @@ import {
   runRulesToPatch,
   scheduleFormSchema,
   scheduleToPatch,
+  styleFormSchema,
+  styleToForm,
+  styleToPatch,
   writingRulesFormSchema,
   writingRulesToForm,
   writingRulesToPatch,
@@ -67,14 +70,39 @@ describe("Setup sections save only their own keys", () => {
     expect(runRulesFormSchema.safeParse({ approve_threshold: "55", same_company_cooldown_days: "30", run_limit_minutes: "2" }).success).toBe(false);
   });
 
-  it("writing rules round-trip through the form text", () => {
-    const cfg = mergeWorkflowConfig(base(), { tools_by_industry: { saas: "We build in React.", default: "We build in Node." }, banned_phrases: ["synergy", "leverage"], reference_emails: ["Hi A", "Hi B"], excluded_domains: ["bad.com"] });
+  it("filtering rules round-trip through the form text and leave the email style alone", () => {
+    const cfg = mergeWorkflowConfig(base(), { tools_by_industry: { saas: "We build in React.", default: "We build in Node." }, banned_phrases: ["synergy", "leverage"], reference_emails: ["Hi A", "Hi B"], excluded_domains: ["bad.com"], excluded_titles: ["intern"] });
     const form = writingRulesToForm(cfg);
-    const back = mergeWorkflowConfig(cfg, writingRulesToPatch(writingRulesFormSchema.parse(form), cfg));
+    expect(Object.keys(form).sort()).toEqual(["countries_in_scope", "excluded_domains", "excluded_titles", "holidays"]);
+    const back = mergeWorkflowConfig(cfg, writingRulesToPatch(writingRulesFormSchema.parse(form)));
+    expect(back.excluded_domains).toEqual(["bad.com"]);
+    expect(back.excluded_titles).toEqual(["intern"]);
+    // the email style (tools, samples, banned phrases) is saved on its own tab and is not reset by this form
     expect(back.tools_by_industry).toEqual(cfg.tools_by_industry);
     expect(back.banned_phrases).toEqual(["synergy", "leverage"]);
     expect(back.reference_emails).toEqual(["Hi A", "Hi B"]);
-    expect(back.excluded_domains).toEqual(["bad.com"]);
+  });
+
+  it("email style round-trips through the form text, and saves only its own keys", () => {
+    const cfg = mergeWorkflowConfig(base(), { tools_by_industry: { "health, medical": "FHIR.", default: "We build in Node." }, banned_phrases: ["synergy"], reference_emails: ["Hi A,\n\nOne.", "Hi B,\n\nTwo."], sender_company: "Acme Dev", excluded_domains: ["bad.com"] });
+    const form = styleToForm(cfg);
+    expect(form.reference_emails).toBe("Hi A,\n\nOne.\n---\nHi B,\n\nTwo.");
+    expect(form.tools_by_industry).toContain("health, medical: FHIR.");
+    const back = mergeWorkflowConfig(cfg, styleToPatch(styleFormSchema.parse(form), cfg));
+    expect(back).toEqual(cfg);
+    const edited = mergeWorkflowConfig(cfg, styleToPatch(styleFormSchema.parse({ ...form, sender_company: "New Co", banned_phrases: "a\nb", tools_by_industry: "saas: React." }), cfg));
+    expect(edited).toMatchObject({ sender_company: "New Co", banned_phrases: ["a", "b"], excluded_domains: ["bad.com"], postal_address: "1 Main St, Pune" });
+    expect(edited.tools_by_industry).toEqual({ saas: "React.", default: "We usually build those in React with a Node or Django back end and Postgres." }); // the default row always exists
+  });
+
+  it("email style needs a company, and refuses more than five samples", () => {
+    const ok = { style_guide: "", sender_company: "Acme Dev", tools_by_industry: "", reference_emails: "", banned_phrases: "" };
+    expect(styleFormSchema.safeParse({ ...ok, sender_company: "" }).success).toBe(false);
+    const six = Array.from({ length: 6 }, (_, i) => `Sample ${i}`).join("\n---\n");
+    const r = styleFormSchema.safeParse({ ...ok, reference_emails: six });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.message).toMatch(/at most 5 sample emails \(you have 6\)/);
+    expect(styleFormSchema.safeParse({ ...ok, reference_emails: "one\n---\ntwo" }).success).toBe(true); // fewer than three is only a warning in the form
   });
 
   it("helpers: one entry per line or comma, default tools sentence is always present", () => {

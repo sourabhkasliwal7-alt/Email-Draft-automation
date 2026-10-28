@@ -33,4 +33,16 @@ export const DRAFT_NOTICES: Record<string, string> = {
   retry_running: "Done. The lead is back at the step that failed and will continue in the current run. Nothing that already ran is repeated.",
   retry_paused: "The lead is back at the step that failed, but this campaign has a paused run. Resume or cancel that run on Home first, then it continues.",
   retry_started: "Done. The lead is back at the step that failed and a run has started: watch it on Home. Nothing that already ran is repeated.",
+  // "Retry all failed drafts": {n} is filled in by draftNotice()
+  retry_drafts_started: "{n} will be written again (writing step only). A run has started: watch it on Home.",
+  retry_drafts_running: "{n} will be written again (writing step only) in the run that is already going.",
+  retry_drafts_paused: "{n} will be written again (writing step only), but a run of this campaign is paused. Resume or cancel it on Home first, then they continue.",
 };
+
+/** The message for a ?notice= code; the bulk Retry codes carry a count in ?n= ("7 drafts" / "1 draft"). */
+export function draftNotice(code: string | undefined, n?: string | null): string | null {
+  const text = code ? DRAFT_NOTICES[code] : undefined;
+  if (!text) return null;
+  const count = Math.max(0, Math.min(100000, Number.parseInt(n ?? "", 10) || 0));
+  return text.replace("{n}", `${count} ${count === 1 ? "draft" : "drafts"}`);
+}

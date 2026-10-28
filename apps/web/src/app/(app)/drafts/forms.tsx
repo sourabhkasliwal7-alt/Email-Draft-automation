@@ -1,11 +1,11 @@
 "use client";
 
-import { Ban, RotateCcw, SkipForward } from "lucide-react";
+import { Ban, RotateCcw, SkipForward, Wand2 } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
 import { ConfirmButton } from "@/components/confirm";
 import { FormMessage, SubmitButton, useActionForm } from "@/components/form";
 import { markDncAction, skipLeadAction } from "../attention/actions";
-import { retryLeadAction } from "./actions";
+import { retryFailedDraftsAction, retryLeadAction } from "./actions";
 
 /** Retry / Skip / Do not contact for one lead in Needs attention. Skip and Do not contact ask first. */
 export function AttentionButtons({ leadId, company, noContact = false }: { leadId: string; company?: string | null; noContact?: boolean }) {
@@ -55,6 +55,31 @@ export function AttentionButtons({ leadId, company, noContact = false }: { leadI
       <div className="max-w-xs text-left text-xs">
         <FormMessage state={state} />
       </div>
+    </div>
+  );
+}
+
+/** One button for every email that failed its checks: only the writing step runs again. */
+export function RetryFailedDraftsButton({ count }: { count: number }) {
+  const { state, onSubmit, pending } = useActionForm(() => retryFailedDraftsAction());
+  return (
+    <div className="space-y-2" data-testid="retry-failed-box">
+      <form onSubmit={onSubmit}>
+        <ConfirmButton
+          pending={pending}
+          icon={<Wand2 aria-hidden />}
+          data-testid="retry-failed-drafts"
+          confirm={{
+            title: `Write these ${count} email${count === 1 ? "" : "s"} again?`,
+            confirmLabel: "Write again",
+            tone: "primary",
+            body: <p>Write these {count} emails again? Only the writing step runs. The research, the approval and the email addresses are kept, and no credit is used again.</p>,
+          }}
+        >
+          Retry all {count} failed draft{count === 1 ? "" : "s"}
+        </ConfirmButton>
+      </form>
+      <FormMessage state={state} />
     </div>
   );
 }

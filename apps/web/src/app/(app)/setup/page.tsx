@@ -13,6 +13,8 @@ import { ApolloTab, apolloState } from "./apollo";
 import { CampaignsTab, OffersTab, loadCampaignOfferFacts } from "./campaigns-offers";
 import { FooterForm, ScheduleForm } from "./forms";
 import { GmailTab, loadGmailFacts } from "./mailboxes";
+import { EmailStyleForm } from "./style-form";
+import { styleToForm } from "./schemas";
 import { SetupTabs } from "./tabs";
 
 export default async function SetupPage({ searchParams }: { searchParams: Promise<{ tab?: string; gmail?: string; add?: string }> }) {
@@ -57,7 +59,7 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
       <div className="space-y-6">
         <SetupTabs active={tab} marks={marks} />
 
-        {tab === "gmail" && <GmailTab role={user.role} gmail={gmail} adding={add === "1"} />}
+        {tab === "gmail" && <GmailTab role={user.role} gmail={gmail} adding={add === "1"} senderCompany={workflow.sender_company} />}
         {tab === "apollo" && <ApolloTab role={user.role} />}
         {tab === "campaigns" && <CampaignsTab role={user.role} />}
         {tab === "offers" && <OffersTab role={user.role} />}
@@ -70,6 +72,11 @@ export default async function SetupPage({ searchParams }: { searchParams: Promis
                 {workflow.postal_address.trim() ? "The footer is set." : "The footer is not set yet."} An admin can change it.
               </p>
             )}
+          </div>
+        )}
+        {tab === "style" && (
+          <div id="style" data-testid="section-style">
+            <EmailStyleForm values={styleToForm(workflow)} canEdit={admin} />
           </div>
         )}
         {tab === "schedule" && (

@@ -14,3 +14,4 @@ export * from "./pipeline/providers";
 export * from "./workflow";
 export * from "./discovery";
 export * from "./run-report";
+export * from "./offers";

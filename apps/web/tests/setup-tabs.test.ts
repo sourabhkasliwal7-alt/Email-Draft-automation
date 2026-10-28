@@ -4,20 +4,22 @@ import { SETUP_TABS, gmailBanner, parseSetupTab, setupTabHref, setupTabMarks } f
 import { describeEstimate } from "../src/lib/run-estimate";
 
 describe("Setup tabs", () => {
-  it("has the seven tabs in order and defaults to Gmail", () => {
-    expect(SETUP_TABS.map((t) => t.key)).toEqual(["gmail", "apollo", "campaigns", "offers", "footer", "schedule", "advanced"]);
+  it("has the eight tabs in order and defaults to Gmail", () => {
+    expect(SETUP_TABS.map((t) => t.key)).toEqual(["gmail", "apollo", "campaigns", "offers", "footer", "style", "schedule", "advanced"]);
     expect(parseSetupTab(undefined)).toBe("gmail");
     expect(parseSetupTab("nonsense")).toBe("gmail");
     expect(parseSetupTab("offers")).toBe("offers");
+    expect(parseSetupTab("style")).toBe("style");
+    expect(setupTabHref("style")).toBe("/setup?tab=style");
     expect(parseSetupTab(["footer", "x"])).toBe("footer");
     expect(setupTabHref("apollo")).toBe("/setup?tab=apollo");
   });
 
   it("marks a tab done (tick) or todo (dot); Advanced never shows a mark and Schedule is quiet while off", () => {
     const none = setupTabMarks({ gmailReady: false, apolloLive: false, campaigns: 0, offers: 0, footerSet: false, scheduleOn: false });
-    expect(none).toEqual({ gmail: "todo", apollo: "todo", campaigns: "todo", offers: "todo", footer: "todo", schedule: "none", advanced: "none" });
+    expect(none).toEqual({ gmail: "todo", apollo: "todo", campaigns: "todo", offers: "todo", footer: "todo", style: "none", schedule: "none", advanced: "none" });
     const all = setupTabMarks({ gmailReady: true, apolloLive: true, campaigns: 1, offers: 2, footerSet: true, scheduleOn: true });
-    expect(all).toEqual({ gmail: "done", apollo: "done", campaigns: "done", offers: "done", footer: "done", schedule: "done", advanced: "none" });
+    expect(all).toEqual({ gmail: "done", apollo: "done", campaigns: "done", offers: "done", footer: "done", style: "none", schedule: "done", advanced: "none" });
   });
 });
 

@@ -186,6 +186,8 @@ async function writeChunk(
   // 4. campaign leads (never resets an existing lead) + history events
   const leadRows = live.filter((i) => contactIdOf.has(i.rowNumber)).map((i) => ({
     campaign_id: ctx.campaignId, contact_id: contactIdOf.get(i.rowNumber)!, lead_source: i.n.lead_source ?? ctx.leadSourceDefault, status: "imported",
+    // data problems found in the row (for example "email domain mismatch") travel with the lead into the run report
+    score_components: (i.n.data_flags.length ? { data_flags: i.n.data_flags } : {}) as Json,
   }));
   if (leadRows.length) {
     must(await db.from("campaign_leads").upsert(leadRows, { onConflict: "campaign_id,contact_id", ignoreDuplicates: true }), "insert leads");

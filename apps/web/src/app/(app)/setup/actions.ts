@@ -19,6 +19,8 @@ import {
   runRulesToPatch,
   scheduleFormSchema,
   scheduleToPatch,
+  styleFormSchema,
+  styleToPatch,
   webExcludeFormSchema,
   webExcludeToPatch,
   writingRulesFormSchema,
@@ -65,7 +67,8 @@ export const saveCredits = async (_p: ActionState, fd: FormData) => section(fd, 
 export const saveRunRules = async (_p: ActionState, fd: FormData) =>
   section(fd, runRulesFormSchema, ["dry_run", "allow_risky", "skip_verification"], (v) => runRulesToPatch(v), "Run rules saved.");
 export const saveWebExclude = async (_p: ActionState, fd: FormData) => section(fd, webExcludeFormSchema, [], (v) => webExcludeToPatch(v), "Saved. Web discovery never uses these websites as leads.");
-export const saveWritingRules = async (_p: ActionState, fd: FormData) => section(fd, writingRulesFormSchema, [], (v, existing) => writingRulesToPatch(v, existing), "Writing rules saved.");
+export const saveWritingRules = async (_p: ActionState, fd: FormData) => section(fd, writingRulesFormSchema, [], (v) => writingRulesToPatch(v), "Rules saved.");
+export const saveEmailStyle = async (_p: ActionState, fd: FormData) => section(fd, styleFormSchema, [], (v, existing) => styleToPatch(v, existing), "Email style saved.");
 
 /** Prices are append-only history: a new row takes effect now and older rows keep pricing older usage. */
 export async function addPrice(_prev: ActionState, formData: FormData): Promise<ActionState> {

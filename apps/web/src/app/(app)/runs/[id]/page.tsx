@@ -11,6 +11,7 @@ import { Badge, StatusBadge, type Status } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
+import { EMAIL_MISMATCH_LABEL, emailStatusWords } from "@/lib/email-style";
 import { createClient } from "@/lib/supabase/server";
 import { PLAIN_PAUSE, gmailDraftUrl, plainLeadStatus, plainReason, plainStep } from "@/lib/plain";
 import { quickCheckOf } from "@/lib/quick-check";
@@ -164,7 +165,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
             <div>
               <CardTitle>Leads in this run</CardTitle>
               <CardDescription>
-                What the quick check said about each lead, and where it ended. The run report (CSV) has every lead with all the details{leadTotal > leadLines.length ? `; this list shows the first ${leadLines.length} of ${leadTotal}` : ""}.
+                What the quick check said about each lead, which offer the rules chose for it and why, and where it ended. The run report (CSV) has every lead with all the details{leadTotal > leadLines.length ? `; this list shows the first ${leadLines.length} of ${leadTotal}` : ""}.
               </CardDescription>
             </div>
           </CardHeader>
@@ -173,11 +174,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
               <EmptyState>No leads were worked on in this run.</EmptyState>
             ) : (
               <div className="overflow-x-auto rounded-xl border">
-                <table className="w-full min-w-[44rem] text-sm">
+                <table className="w-full min-w-[56rem] text-sm">
                   <thead className="bg-muted/60 text-left text-xs tracking-wide text-muted-foreground uppercase">
                     <tr>
                       <th className="px-4 py-2.5">Lead</th>
                       <th className="px-4 py-2.5">Quick check</th>
+                      <th className="px-4 py-2.5">Offer</th>
                       <th className="px-4 py-2.5">Outcome</th>
                     </tr>
                   </thead>
@@ -190,6 +192,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
                           <td className="px-4 py-2">
                             <div className="font-medium">{l.name || "No person yet"}</div>
                             <div className="text-xs text-muted-foreground">{l.company}</div>
+                            {l.hasEmail && (
+                              <div className="mt-1 flex flex-wrap gap-1" data-testid="run-lead-email-status">
+                                <Badge tone={emailStatusWords(l.emailStatus).tone}>{emailStatusWords(l.emailStatus).label}</Badge>
+                                {l.emailMismatch && <Badge tone="amber">{EMAIL_MISMATCH_LABEL}</Badge>}
+                              </div>
+                            )}
                           </td>
                           <td className="max-w-80 px-4 py-2" data-testid="run-lead-quick-check">
                             {qc ? (
@@ -197,6 +205,16 @@ export default async function RunDetailPage({ params }: { params: Promise<{ id: 
                                 <Badge tone={qc.tone}>{qc.label}</Badge>
                                 {qc.businessType && <span className="ml-2 text-xs font-medium">{qc.businessType}</span>}
                                 {qc.reason && <div className="text-xs break-words text-muted-foreground">{qc.reason}</div>}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                          <td className="max-w-72 px-4 py-2" data-testid="run-lead-offer">
+                            {l.offerName ? (
+                              <div className="space-y-0.5">
+                                <div className="text-xs font-medium">{l.offerName}</div>
+                                {l.offerReason && <div className="text-xs break-words text-muted-foreground">{l.offerReason}</div>}
                               </div>
                             ) : (
                               <span className="text-muted-foreground">-</span>

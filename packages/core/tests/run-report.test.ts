@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RUN_REPORT_COLUMNS, buildScreenPrompt, decisionOf, emailQualityOf, reportRow, runReportCsv, runReportFileName, stepOfReason, type RunReportLead } from "../src";
 
 const base: RunReportLead = {
-  firstName: "Asha", lastName: "Rao", jobTitle: "Head of Operations", email: "asha@acme.io", emailStatus: "valid", profileUrl: "https://example.com/in/asha",
+  firstName: "Asha", lastName: "Rao", jobTitle: "Head of Operations", email: "asha@acme.io", emailStatus: "valid", dataFlags: [], profileUrl: "https://example.com/in/asha",
   companyName: "Acme", domain: "acme.io", country: "IN", employeeCount: 80, industry: "software", businessType: "software agency",
   leadSource: "import:leads.csv", sourceDetail: null,
   quickCheck: { fit: "yes", reason: "builds software for clients" },
@@ -11,18 +11,18 @@ const base: RunReportLead = {
   trigger: "Acme is hiring a React developer", triggerDate: "2026-10-01", triggerUrl: "https://acme.io/careers",
   score: 82, components: { fit: 25, trigger: 20, role: 15, size: 10, data: 12 }, cutoff: 55,
   status: "draft_ready", reasonCodes: [], wouldApprove: false,
-  offerName: "White-label development", caseStudy: "Agency overflow case",
+  offerName: "White-label development", offerReason: 'Matched "agency" in the business type.', caseStudy: "Agency overflow case",
   draft: { subject: "Quick idea", body: "Hi Asha,\n\nI saw the role.\n\nBest", attempts: 1 },
-  gmailLink: "https://mail.google.com/mail/u/?authuser=me%40x.com#drafts?compose=1", mailbox: "me@x.com", costUsd: 0.01234,
+  gmailLink: "https://mail.google.com/mail/u/?authuser=me%40x.com#drafts?compose=1", mailbox: "me@x.com", costUsd: 0.01234, models: { quickCheck: "claude-haiku-5-5", facts: "claude-haiku-5-5", writing: "claude-sonnet-5-5", checker: "claude-haiku-5-5" },
 };
 
 describe("run report", () => {
   it("has one named column per item of the brief, in a fixed order", () => {
     expect(RUN_REPORT_COLUMNS).toEqual([
-      "First name", "Last name", "Job title", "Email", "Email status", "Profile URL", "Company", "Website", "Country", "Employees", "Industry", "Business type",
+      "First name", "Last name", "Job title", "Email", "Email status", "Data flags", "Profile URL", "Company", "Website", "Country", "Employees", "Industry", "Business type",
       "Source", "Search query", "Quick check", "Quick check reason", "Pages visited", "Hiring roles found", "Verified facts", "Facts passed quote check", "Facts failed quote check",
       "Trigger", "Trigger date", "Trigger source", "Score", "Score: fit", "Score: trigger", "Score: role", "Score: size", "Score: data quality", "Cut-off", "Decision",
-      "Skip reason", "Stopped at step", "Offer", "Case study", "Email subject", "Email body", "Email quality", "Gmail draft link", "Mailbox", "Cost (USD)",
+      "Skip reason", "Stopped at step", "Offer", "Why this offer", "Case study", "Email subject", "Email body", "Email quality", "Gmail draft link", "Mailbox", "Model used", "Cost (USD)",
     ]);
   });
 
@@ -33,7 +33,7 @@ describe("run report", () => {
       "Pages visited": "https://acme.io/ | https://acme.io/careers", "Hiring roles found": "React Developer",
       "Verified facts": "Acme is hiring a React developer [https://acme.io/careers]", "Facts passed quote check": "3", "Facts failed quote check": "1",
       "Score": "82", "Score: fit": "25", "Score: trigger": "20", "Score: role": "15", "Score: size": "10", "Score: data quality": "12", "Cut-off": "55", "Decision": "approved",
-      "Skip reason": "", "Stopped at step": "", "Offer": "White-label development", "Case study": "Agency overflow case",
+      "Skip reason": "", "Stopped at step": "", "Offer": "White-label development", "Why this offer": 'Matched "agency" in the business type.', "Case study": "Agency overflow case",
       "Email subject": "Quick idea", "Email quality": "passed first time", "Mailbox": "me@x.com", "Cost (USD)": "0.0123",
     });
     expect(r["Email body"]).toBe("Hi Asha,\n\nI saw the role.\n\nBest");

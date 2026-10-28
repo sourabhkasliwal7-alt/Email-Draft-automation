@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { WORKFLOW_SETTINGS_KEY, parseWorkflowConfig, retryPatch } from "@outreach/core";
 import { startRun } from "@outreach/db";
 import { guardAction, type ActionState } from "@/lib/auth";
+import { failedDraftIds } from "@/lib/email-style";
 import { NO_CONTACT_ADVICE } from "@/lib/plain";
 import { createServiceDb } from "@/lib/supabase/service";
 
@@ -54,4 +55,60 @@ export async function retryLeadAction(_prev: ActionState, formData: FormData): P
     return { ok: false, message: `Back in line for ${patch.step}, but the run could not start: ${(e as Error).message}` };
   }
   redirect("/drafts?tab=attention&notice=retry_started");
+}
+
+/**
+ * "Retry all failed drafts": every lead of Needs attention whose email did not pass the checks goes back to the writing step only (the
+ * research, approval, email address and credits are kept, so nothing earlier runs or is paid for again), then one run per campaign starts.
+ * Same person, same guards and same running/paused answers as the single Retry.
+ */
+export async function retryFailedDraftsAction(): Promise<ActionState> {
+  const guard = await guardAction("lead.mark_dnc");
+  if (!guard.ok) return guard.state;
+  const db = createServiceDb();
+  const { data: rows } = await db
+    .from("campaign_leads")
+    .select("id, status, next_action, reason_codes, campaign_id, contact_id, contacts(email)")
+    .overlaps("reason_codes", ["draft-failed"])
+    .limit(500);
+  const failed = new Set(failedDraftIds(rows ?? []));
+  const leads = (rows ?? []).filter((l) => failed.has(l.id));
+  if (!leads.length) return { ok: false, message: "No email has failed its checks. Nothing to write again." };
+
+  const { data: drafts } = await db.from("email_drafts").select("campaign_lead_id").in("campaign_lead_id", leads.map((l) => l.id));
+  const hasDraft = new Set((drafts ?? []).map((d) => d.campaign_lead_id));
+  const campaigns = new Set<string>();
+  let n = 0;
+  for (const lead of leads) {
+    const patch = retryPatch({ status: lead.status, reason_codes: lead.reason_codes, next_action: lead.next_action }, { hasEmail: Boolean(lead.contacts?.email), hasDraft: hasDraft.has(lead.id) });
+    if (!patch) continue;
+    const { error } = await db.from("campaign_leads").update({ status: patch.status, next_action: patch.next_action, reason_codes: [] }).eq("id", lead.id);
+    if (error) return { ok: false, message: `${n} written again before an error: ${error.message}` };
+    await db.from("lead_events").insert({ campaign_lead_id: lead.id, contact_id: lead.contact_id, type: "retry", payload: { from: lead.reason_codes, step: patch.step, bulk: true }, actor: guard.user.email });
+    campaigns.add(lead.campaign_id);
+    n++;
+  }
+  revalidatePath("/drafts");
+  revalidatePath("/");
+
+  const { data: cfgRow } = await db.from("settings").select("value").eq("key", WORKFLOW_SETTINGS_KEY).maybeSingle();
+  const test = parseWorkflowConfig(cfgRow?.value).dry_run;
+  let started = 0;
+  let running = 0;
+  let paused = 0;
+  for (const campaignId of campaigns) {
+    const { data: active } = await db.from("pipeline_batches").select("id, status").eq("campaign_id", campaignId).in("status", ["running", "paused"]).maybeSingle();
+    if (active?.status === "running") running++;
+    else if (active?.status === "paused") paused++;
+    else {
+      try {
+        await startRun(db, campaignId, { startedBy: guard.user.id, dryRun: test, label: "retry" });
+        started++;
+      } catch (e) {
+        return { ok: false, message: `${n} back in line for writing the email, but a run could not start: ${(e as Error).message}` };
+      }
+    }
+  }
+  const code = started ? "retry_drafts_started" : paused && !running ? "retry_drafts_paused" : "retry_drafts_running";
+  redirect(`/drafts?tab=attention&notice=${code}&n=${n}`);
 }

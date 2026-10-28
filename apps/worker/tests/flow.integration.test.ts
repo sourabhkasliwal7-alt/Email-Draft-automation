@@ -99,7 +99,7 @@ describe.skipIf(!enabled)("core flow (mock adapters, real database)", () => {
     inboxId = inbox!.id;
     const { data: offer } = await db.from("offers").insert({ name: `Audit ${tag}`, allowed_claims: ["Fixed-scope, two-week audit"], cta_options: ["Open to a quick call next week?"] }).select("id").single();
     await db.from("case_studies").insert({ offer_id: offer!.id, title: `Logistics case ${tag}`, summary: "Illustrative", allowed_numbers: { hours: 12 }, industries: ["logistics"] });
-    const base = { offer_id: offer!.id, inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 6 };
+    const base = { offer_id: offer!.id, offer_ids: [offer!.id], inbox_id: inboxId, cta: "Open to a quick call next week?", daily_cap: 6 };
     csvCampaignId = (await db.from("campaigns").insert({ name: `${tag} csv`, ...base, icp: { leadSource: "csv", requireEmail: true } as Json }).select("id").single()).data!.id;
     dryCampaignId = (await db.from("campaigns").insert({ name: `${tag} dry`, ...base, icp: { leadSource: "csv", requireEmail: true } as Json }).select("id").single()).data!.id;
     apolloCampaignId = (
@@ -649,7 +649,7 @@ ${req.prompt}`)) throw new Error("OpenRouter says the account has too few credit
     const offerId = (await db.from("campaigns").select("offer_id").eq("id", csvCampaignId).single()).data!.offer_id;
     const { data } = await db
       .from("campaigns")
-      .insert({ name: `${tag} ${name}`, offer_id: offerId, inbox_id: inbox, cta: "Open to a quick call next week?", daily_cap: 6, icp: icp as Json, ...extra })
+      .insert({ name: `${tag} ${name}`, offer_id: offerId, offer_ids: offerId ? [offerId] : [], inbox_id: inbox, cta: "Open to a quick call next week?", daily_cap: 6, icp: icp as Json, ...extra })
       .select("id")
       .single();
     return data!.id;

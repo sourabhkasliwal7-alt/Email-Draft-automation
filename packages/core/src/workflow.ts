@@ -48,6 +48,8 @@ export const workflowConfigSchema = z.object({
   postal_address: z.string().default(""),
   optout_line: z.string().default(""),
   white_label_line: z.string().default(DEFAULT_WHITE_LABEL_LINE),
+  /** the company in the email sign-off, under the sender's name (the mailbox display name). Written once, never twice. */
+  sender_company: z.string().default("Nuance Infotech"),
   style_guide: z.string().default("Short, plain, specific. One true detail, one question about their process, concrete tools, the white-label line, a soft ask. No hype."),
   reference_emails: z.array(z.string()).default([]),
   /** keyword in the business type -> the sentence naming tools that fit that industry; "default" is the fallback */
@@ -471,6 +473,9 @@ export interface WriteContext {
   company: string;
   businessType: string;
   senderFirstName: string;
+  /** the person's name for the sign-off (the mailbox display name); empty when the display name is just the company name */
+  senderName?: string;
+  senderCompany?: string;
   offerName: string | null;
   caseStudy: { code: string; title: string; summary: string | null; allowedNumbers: Record<string, number> } | null;
   facts: WriteFact[];
@@ -478,11 +483,49 @@ export interface WriteContext {
   config: Pick<WorkflowConfig, "style_guide" | "reference_emails" | "white_label_line" | "banned_phrases">;
 }
 
-/** Picks the industry tools sentence from config by keyword in the business type (E7: rules, not free text). */
-export function toolsFor(businessType: string, byIndustry: Record<string, string>): string {
-  const bt = businessType.toLowerCase();
-  const key = Object.keys(byIndustry).find((k) => k !== "default" && bt.includes(k.toLowerCase()));
-  return byIndustry[key ?? "default"] ?? "";
+/**
+ * Picks the tools sentence for a lead from the "Tools by industry" table (SRS 8.1, E7: rules, not free text). A row's key is one or more
+ * keywords separated by commas ("health, medical"); the row matches when a keyword is in the lead's business type or industry. The most
+ * specific (longest) matching keyword wins; without a match the "default" row is used.
+ */
+export function toolsFor(businessType: string, byIndustry: Record<string, string>, industry?: string | null): string {
+  const hay = `${businessType} ${industry ?? ""}`.toLowerCase();
+  let best: { key: string; len: number } | null = null;
+  for (const key of Object.keys(byIndustry)) {
+    if (key === "default") continue;
+    for (const kw of key.split(/[,;|]/).map((k) => k.trim().toLowerCase()).filter(Boolean)) {
+      if (hay.includes(kw) && (!best || kw.length > best.len)) best = { key, len: kw.length };
+    }
+  }
+  return byIndustry[best?.key ?? "default"] ?? "";
+}
+
+/** The sign-off: the person's name from the mailbox display name, then the company once. A display name that is only the company name gives no person. */
+export function senderIdentity(i: { displayName: string | null | undefined; email: string | null | undefined; company: string }): { name: string; firstName: string; company: string; displayNameIsCompany: boolean } {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const display = (i.displayName ?? "").trim();
+  const company = i.company.trim();
+  const isCompany = Boolean(display) && Boolean(company) && (key(display) === key(company) || key(display).includes(key(company)) || key(company).includes(key(display)));
+  const fromEmail = !display && i.email ? (i.email.split("@")[0] ?? "").split(/[._+-]/)[0] ?? "" : "";
+  const name = isCompany ? "" : display || (fromEmail ? fromEmail[0]!.toUpperCase() + fromEmail.slice(1) : "");
+  return { name, firstName: name.split(/\s+/)[0] ?? "", company, displayNameIsCompany: isCompany };
+}
+
+/** True when the subject repeats two or more words in a row from the internal offer name (for example "for agencies" from "Web development for agencies"). */
+export function subjectHasOfferName(subject: string, offerName: string | null | undefined): boolean {
+  if (!offerName?.trim()) return false;
+  const toks = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+  const stop = new Set(["and", "for", "the", "of", "a", "an", "to", "in", "with", "on", "at", "your"]);
+  const sub = toks(subject);
+  const off = toks(offerName);
+  for (let i = 0; i < sub.length; i++) {
+    for (let j = 0; j < off.length; j++) {
+      let n = 0;
+      while (i + n < sub.length && j + n < off.length && sub[i + n] === off[j + n]) n++;
+      if (n >= 2 && sub.slice(i, i + n).some((t) => !stop.has(t))) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -495,10 +538,11 @@ const RULE_TEXT: Record<string, string> = {
   W2: "Use exactly ONE of the given verified facts (list its id in fact_ids_used) and ask exactly ONE question in the whole email: exactly one question mark.",
   W3: "Never use a banned phrase (the BANNED list above), in any wording or case.",
   W4: "No exclamation marks, emoji, links, email addresses in the body, or dashes used as pauses.",
-  W5: "Subject: 7 words at most, lower case or sentence case (not Title Case), no question mark.",
+  W5: "Subject: 7 words at most, lower case or sentence case (not Title Case), no question mark, and never the internal offer name or words from it (the OFFER line is internal, not for the lead).",
   W6: "Write no number, client name or claim that is not in the fact you use or in the case study.",
-  W7: "Include the white-label line exactly as given (word for word), and end with a soft ask to share an example or talk (a reply is the only thing you ask for).",
+  W7: "Include the white-label line exactly as given (word for word), then a reply-only soft ask such as 'Happy to share a short example if useful, just reply.' (it must say reply). Never ask them to send, forward, share, attach or fill in anything: a reply is the only thing you ask for.",
   W8: "Do not reuse the subject or the opening sentence of another draft from this run: write a fresh opening.",
+  W9: "Sign off with the SENDER_NAME line and then the SENDER_COMPANY line, each once. Never write the company name twice in the sign-off.",
   C4: "A reviewer scores six items from 0 to 2: one true detail, one question about their process, tools for their industry, the white-label line, a soft ask, human tone. Every item needs at least 1 and the total at least 9 of 12.",
   greeting: "Start with the greeting 'Hi <FIRST_NAME>,' using exactly the FIRST_NAME given above, and no other name.",
 };
@@ -514,9 +558,13 @@ export function explainFlag(flag: string): string {
 export function buildWritePrompt(ctx: WriteContext, feedback: string[] = [], previous?: { subject: string; body: string }): { system: string; prompt: string } {
   const system =
     "[task:write] You write one short plain-text cold email in the sender's own voice (first person). Use EXACTLY ONE of the given facts. " +
-    "Structure: subject (2-6 words, lower or sentence case, no question mark); one opening sentence with the true detail; ONE question about their process; one or two sentences naming the tools; the white-label line verbatim; a soft ask to share an example; sign-off with first name and Nuance Infotech. " +
+    "Structure: subject (2-6 words, lower or sentence case, no question mark, never the OFFER name or words from it); one opening sentence with the true detail; ONE question about their process; one or two sentences naming the tools; the white-label line verbatim; " +
+    "a reply-only soft ask such as 'Happy to share a short example if useful, just reply.' (never ask them to send, forward, share, attach or fill in anything; the only thing you ask for is a reply); " +
+    "sign-off: the SENDER_NAME line, then the SENDER_COMPANY line, each once (if SENDER_NAME is empty write only SENDER_COMPANY; never write the company name twice). " +
     "60-130 words. No exclamation marks, emoji, links, dashes as pauses, or banned phrases. Never invent facts, numbers, names or client work; a case study may be named only if given. " +
     `STYLE GUIDE: ${ctx.config.style_guide}\n` +
+    // the style guide and the sample emails are the same for every lead, so they sit in the system text where the model can cache them
+    (ctx.config.reference_emails.length ? `SAMPLE EMAILS (copy the voice and length, never their facts or names):\n${ctx.config.reference_emails.slice(0, 5).map((e, i) => `SAMPLE ${i + 1}: ${e.replace(/\n/g, " / ")}`).join("\n")}\n` : "") +
     'Return only JSON {"subject":string,"body":string,"fact_ids_used":[string]}.';
   const lines = [
     `FIRST_NAME: ${ctx.firstName}`,
@@ -524,13 +572,14 @@ export function buildWritePrompt(ctx: WriteContext, feedback: string[] = [], pre
     `COMPANY: ${ctx.company}`,
     `BUSINESS_TYPE: ${ctx.businessType}`,
     `SENDER_FIRST_NAME: ${ctx.senderFirstName}`,
-    `OFFER: ${ctx.offerName ?? ""}`,
+    `SENDER_NAME: ${ctx.senderName ?? ctx.senderFirstName}`,
+    `SENDER_COMPANY: ${ctx.senderCompany ?? ""}`,
+    `OFFER (internal, never in the subject): ${ctx.offerName ?? ""}`,
     `CASE_STUDY: ${ctx.caseStudy ? `${ctx.caseStudy.title} - ${ctx.caseStudy.summary ?? ""} ${JSON.stringify(ctx.caseStudy.allowedNumbers)}` : "none"}`,
     `TOOLS: ${ctx.tools}`,
     `WHITE_LABEL_LINE: ${ctx.config.white_label_line}`,
     `BANNED: ${ctx.config.banned_phrases.join(" | ")}`,
     ...ctx.facts.map((f) => `FACT ${f.id}: ${f.statement} | QUOTE: ${f.quote}`),
-    ...ctx.config.reference_emails.slice(0, 5).map((e, i) => `SAMPLE ${i + 1}: ${e.replace(/\n/g, " / ")}`),
   ];
   if (feedback.length) {
     lines.push("THE LAST ATTEMPT FAILED THESE RULES. Rewrite it so that every one of them passes, and keep everything that was already right:");
@@ -560,7 +609,15 @@ export interface EmailCheckContext {
   whiteLabelLine: string;
   bannedPhrases: string[];
   allowedAddresses?: string[];
+  /** the internal offer name: it must not appear in the subject */
+  offerName?: string | null;
+  /** the sign-off: the person's name (when the mailbox has one) and the company, each written once */
+  senderName?: string;
+  senderCompany?: string;
 }
+
+/** Asking the lead to send, forward, share, attach or fill in something is not a reply-only soft ask. */
+const ASKS_LEAD_TO_SEND = /\b(?:send|forward|attach|upload|email)\s+(?:me|us|over|your|a copy|the (?:details|requirements|brief|spec))\b|\bshare\s+(?:your|with me|with us|the (?:details|requirements|brief|spec))\b|\breply with\b|\bfill (?:in|out)\b|\bbook (?:a|the)\b/i;
 
 /** W1-W7: the checks done in code. Every flag is a hard fail (one rewrite, then Skipped: draft-failed). */
 export function checkEmailCode(w: WriteResult, c: EmailCheckContext): string[] {
@@ -599,8 +656,21 @@ export function checkEmailCode(w: WriteResult, c: EmailCheckContext): string[] {
 
   // W7: fixed white-label line and a soft ask
   if (!nBody.includes(normText(c.whiteLabelLine))) flags.push("W7: white-label line missing or changed");
-  const lastParas = body.split(/\n\s*\n/).slice(-3).join(" ").toLowerCase();
+  const paras = body.split(/\n\s*\n/);
+  const lastParas = paras.slice(-3).join(" ").toLowerCase();
   if (!/\b(share|send|example|talk|walk you through|happy to)\b/.test(lastParas)) flags.push("W7: soft ask missing");
+  else if (!/\breply\b/.test(lastParas)) flags.push("W7: the soft ask must be reply-only (say 'just reply')");
+  if (ASKS_LEAD_TO_SEND.test(paras.slice(-3).join(" "))) flags.push("W7: asks the lead to send, share or fill in something (a reply is the only ask)");
+
+  // W5 (cont.): the subject never carries the internal offer name
+  if (subjectHasOfferName(sub, c.offerName)) flags.push("W5: subject contains the internal offer name");
+
+  // W9: the sign-off is the sender's name and the company, each once
+  const signoff = (paras[paras.length - 1] ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const companyKey = (c.senderCompany ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (companyKey && signoff.split(companyKey).length - 1 > 1) flags.push("W9: the company name is written twice in the sign-off");
+  const nameKey = (c.senderName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (nameKey && !signoff.includes(nameKey.split(" ")[0]!)) flags.push("W9: the sign-off does not use the sender's name");
 
   // greeting must use the record's first name (no other name)
   if (c.firstName && !new RegExp(`^\\s*(hi|hello|hey)\\s+${c.firstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)) flags.push("greeting does not use the contact's first name");
@@ -646,6 +716,7 @@ export const workflowFormSchema = z.object({
   postal_address: z.string().trim().max(300).default(""),
   optout_line: z.string().trim().max(300).default(""),
   white_label_line: z.string().trim().min(5, "Enter the white-label line").max(300),
+  sender_company: z.string().trim().min(2, "Enter your company name").max(100).default("Nuance Infotech"),
   style_guide: z.string().trim().max(2000).default(""),
   excluded_domains: z.string().default(""),
   excluded_titles: z.string().default(""),
@@ -675,7 +746,7 @@ export function workflowFormToConfig(f: WorkflowForm, existing: WorkflowConfig):
     ...existing,
     schedule_enabled: f.schedule_enabled, run_time_ist: f.run_time_ist, holidays: lines(f.holidays), approve_threshold: f.approve_threshold, daily_reveal_cap: f.daily_reveal_cap,
     monthly_credit_cap: f.monthly_credit_cap, same_company_cooldown_days: f.same_company_cooldown_days, run_limit_minutes: f.run_limit_minutes, dry_run: f.dry_run, allow_risky: f.allow_risky,
-    postal_address: f.postal_address, optout_line: f.optout_line, white_label_line: f.white_label_line, style_guide: f.style_guide || existing.style_guide,
+    postal_address: f.postal_address, optout_line: f.optout_line, white_label_line: f.white_label_line, sender_company: f.sender_company, style_guide: f.style_guide || existing.style_guide,
     excluded_domains: lines(f.excluded_domains).map((d) => d.toLowerCase()), excluded_titles: lines(f.excluded_titles), banned_phrases: lines(f.banned_phrases),
     countries_in_scope: lines(f.countries_in_scope), tools_by_industry: parseTools(f.tools_by_industry),
     reference_emails: f.reference_emails.split(/\r?\n-{3,}\r?\n/).map((s) => s.trim()).filter(Boolean),
@@ -687,7 +758,7 @@ export function workflowConfigToForm(c: WorkflowConfig): Record<string, string> 
   return {
     run_time_ist: c.run_time_ist, holidays: c.holidays.join("\n"), approve_threshold: String(c.approve_threshold), daily_reveal_cap: String(c.daily_reveal_cap), monthly_credit_cap: String(c.monthly_credit_cap),
     same_company_cooldown_days: String(c.same_company_cooldown_days), run_limit_minutes: String(c.run_limit_minutes), postal_address: c.postal_address, optout_line: c.optout_line,
-    white_label_line: c.white_label_line, style_guide: c.style_guide, excluded_domains: c.excluded_domains.join("\n"), excluded_titles: c.excluded_titles.join("\n"),
+    white_label_line: c.white_label_line, sender_company: c.sender_company, style_guide: c.style_guide, excluded_domains: c.excluded_domains.join("\n"), excluded_titles: c.excluded_titles.join("\n"),
     banned_phrases: c.banned_phrases.join("\n"), countries_in_scope: c.countries_in_scope.join("\n"), tools_by_industry: Object.entries(c.tools_by_industry).map(([k, v]) => `${k}: ${v}`).join("\n"),
     reference_emails: c.reference_emails.join("\n---\n"), model_screen: c.model_screen, model_extract: c.model_extract, model_write: c.model_write,
   };

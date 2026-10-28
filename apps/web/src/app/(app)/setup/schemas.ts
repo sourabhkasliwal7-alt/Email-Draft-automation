@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WorkflowConfig } from "@outreach/core";
+import { MAX_SAMPLES, joinSamples, splitSamples } from "@/lib/email-style";
 
 /**
  * Setup saves its sections separately. Each section has its own small form schema here and turns into a partial
@@ -51,18 +52,15 @@ export const runRulesFormSchema = z.object({
 });
 export const runRulesToPatch = (f: z.infer<typeof runRulesFormSchema>): Partial<WorkflowConfig> => ({ ...f });
 
+/** Setup > Advanced: who is never written to, and when. (How the email sounds is Setup > Email style.) */
 export const writingRulesFormSchema = z.object({
-  style_guide: z.string().trim().max(2000).default(""),
-  tools_by_industry: z.string().default(""),
-  reference_emails: z.string().default(""),
-  banned_phrases: z.string().default(""),
   excluded_domains: z.string().default(""),
   excluded_titles: z.string().default(""),
   countries_in_scope: z.string().default(""),
   holidays: z.string().default(""),
 });
 
-/** "keyword: sentence" per line; a line starting with default: is the fallback. */
+/** "keyword: sentence" per line; a line starting with default: is the fallback. A keyword may be several words separated by commas. */
 export function parseTools(s: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of s.split(/\r?\n/)) {
@@ -73,16 +71,45 @@ export function parseTools(s: string): Record<string, string> {
   return out;
 }
 
-export const writingRulesToPatch = (f: z.infer<typeof writingRulesFormSchema>, existing: WorkflowConfig): Partial<WorkflowConfig> => ({
-  style_guide: f.style_guide || existing.style_guide,
-  tools_by_industry: parseTools(f.tools_by_industry),
-  reference_emails: f.reference_emails.split(/\r?\n-{3,}\r?\n/).map((s) => s.trim()).filter(Boolean),
-  banned_phrases: lines(f.banned_phrases),
+export const writingRulesToPatch = (f: z.infer<typeof writingRulesFormSchema>): Partial<WorkflowConfig> => ({
   excluded_domains: lines(f.excluded_domains).map((d) => d.toLowerCase()),
   excluded_titles: lines(f.excluded_titles),
   countries_in_scope: lines(f.countries_in_scope),
   holidays: onlyLines(f.holidays),
 });
+
+/** Setup > Email style: how the emails sound and how they are signed. */
+export const styleFormSchema = z
+  .object({
+    style_guide: z.string().trim().max(2000).default(""),
+    sender_company: z.string().trim().min(2, "Enter your company name (it goes under your name at the end of each email)").max(100),
+    tools_by_industry: z.string().default(""),
+    reference_emails: z.string().default(""),
+    banned_phrases: z.string().default(""),
+  })
+  .superRefine((v, ctx) => {
+    const samples = splitSamples(v.reference_emails);
+    if (samples.length > MAX_SAMPLES) ctx.addIssue({ code: "custom", path: ["reference_emails"], message: `Use at most ${MAX_SAMPLES} sample emails (you have ${samples.length}).` });
+    if (samples.some((s) => s.length > 3000)) ctx.addIssue({ code: "custom", path: ["reference_emails"], message: "A sample email is too long (3000 characters at most). Use a typical one." });
+  });
+
+export const styleToPatch = (f: z.infer<typeof styleFormSchema>, existing: WorkflowConfig): Partial<WorkflowConfig> => ({
+  style_guide: f.style_guide || existing.style_guide,
+  sender_company: f.sender_company,
+  tools_by_industry: parseTools(f.tools_by_industry),
+  reference_emails: splitSamples(f.reference_emails),
+  banned_phrases: lines(f.banned_phrases),
+});
+
+export function styleToForm(c: WorkflowConfig): Record<string, string> {
+  return {
+    style_guide: c.style_guide,
+    sender_company: c.sender_company,
+    tools_by_industry: Object.entries(c.tools_by_industry).map(([k, v]) => `${k}: ${v}`).join("\n"),
+    reference_emails: joinSamples(c.reference_emails),
+    banned_phrases: c.banned_phrases.join("\n"),
+  };
+}
 
 /** LinkedIn and Crunchbase are never scraped. They stay on the "never a lead" list whatever is typed. */
 export const ALWAYS_BLOCKED_DOMAINS = ["linkedin.com", "crunchbase.com"];
@@ -106,10 +133,6 @@ export const missingBlocked = (text: string): string[] => {
 /** The reverse, for filling the form. */
 export function writingRulesToForm(c: WorkflowConfig): Record<string, string> {
   return {
-    style_guide: c.style_guide,
-    tools_by_industry: Object.entries(c.tools_by_industry).map(([k, v]) => `${k}: ${v}`).join("\n"),
-    reference_emails: c.reference_emails.join("\n---\n"),
-    banned_phrases: c.banned_phrases.join("\n"),
     excluded_domains: c.excluded_domains.join("\n"),
     excluded_titles: c.excluded_titles.join("\n"),
     countries_in_scope: c.countries_in_scope.join("\n"),

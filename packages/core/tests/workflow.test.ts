@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  senderIdentity,
+  subjectHasOfferName,
+  toolsFor,
   approveTop,
   canTransition,
   checkEmailCode,
@@ -139,17 +142,17 @@ describe("email rules (SRS section 8: W1-W9, C4)", () => {
     "We usually build those in React with a Node or Django back end and Postgres.",
     cfg.white_label_line,
     "",
-    "Happy to share an example of how that works if it is useful.",
+    "Happy to share a short example if it is useful, just reply.",
     "",
-    "Sam",
+    "Sam Rivera",
     "Nuance Infotech",
   ].join("\n");
-  const ctx = { facts, firstName: "Asha", company: "Acme", caseStudyNumbers: [], whiteLabelLine: cfg.white_label_line, bannedPhrases: cfg.banned_phrases };
+  const ctx = { facts, firstName: "Asha", company: "Acme", caseStudyNumbers: [], whiteLabelLine: cfg.white_label_line, bannedPhrases: cfg.banned_phrases, offerName: "White-label web and app development for agencies", senderName: "Sam Rivera", senderCompany: "Nuance Infotech" };
   const write = (body: string, subject = "idea for Acme") => ({ subject, body, fact_ids_used: ["f1"] });
 
   it("a correct email passes every code check", () => expect(checkEmailCode(write(good), ctx)).toEqual([]));
   it("flags exclamation marks, links, banned phrases, invented numbers, a missing white-label line, two questions and a wrong greeting", () => {
-    expect(checkEmailCode(write(good.replace("useful.", "useful!")), ctx).join()).toContain("W4: exclamation");
+    expect(checkEmailCode(write(good.replace("just reply.", "just reply!")), ctx).join()).toContain("W4: exclamation");
     expect(checkEmailCode(write(good.replace("Sam", "see https://x.example.com")), ctx).join()).toContain("W4: link");
     expect(checkEmailCode(write(good.replace("Happy to share", "Just following up. Happy to share")), ctx).join()).toContain("W3: banned phrase");
     expect(checkEmailCode(write(good.replace("our own team", "our own team of 45 people")), ctx).join()).toContain("W6: number 45");
@@ -157,6 +160,52 @@ describe("email rules (SRS section 8: W1-W9, C4)", () => {
     expect(checkEmailCode(write(good.replace("at capacity?", "at capacity? And why?")), ctx).join()).toContain("W2: 2 question marks");
     expect(checkEmailCode(write(good.replace("Hi Asha", "Hi Ben")), ctx).join()).toContain("greeting");
     expect(checkEmailCode({ ...write(good), fact_ids_used: [] }, ctx).join()).toContain("W2: exactly one");
+  });
+  it("the subject never carries the internal offer name, or two words in a row from it", () => {
+    for (const subject of ["web and app development for agencies", "for agencies", "white-label help for Acme", "app development at Acme"]) {
+      expect(checkEmailCode(write(good, subject), ctx).join(), subject).toContain("W5: subject contains the internal offer name");
+    }
+    for (const subject of ["idea for Acme", "your careers page", "a python hire at Acme"]) expect(checkEmailCode(write(good, subject), ctx), subject).toEqual([]);
+    expect(subjectHasOfferName("anything", null)).toBe(false);
+  });
+  it("the soft ask is reply-only: it must say reply, and never asks the lead to send, share, attach or fill in anything", () => {
+    expect(checkEmailCode(write(good.replace("Happy to share a short example if it is useful, just reply.", "Happy to share a short example if it is useful.")), ctx).join()).toContain("W7: the soft ask must be reply-only");
+    for (const ask of ["Please send me your requirements and I will reply.", "Could you forward your roadmap, just reply with it.", "Happy to talk, just share your brief.", "Fill in the form and I will reply."]) {
+      expect(checkEmailCode(write(good.replace("Happy to share a short example if it is useful, just reply.", ask)), ctx).join(), ask).toContain("W7: asks the lead to send");
+    }
+    expect(checkEmailCode(write(good.replace("Happy to share a short example if it is useful, just reply.", "Happy to send a short example if it is useful, just reply.")), ctx)).toEqual([]); // WE send the example
+  });
+  it("the sign-off is the sender's name and the company once", () => {
+    expect(checkEmailCode(write(good.replace("Sam Rivera\nNuance Infotech", "Nuance Infotech\nNuance Infotech")), ctx).join()).toContain("W9: the company name is written twice");
+    expect(checkEmailCode(write(good.replace("Sam Rivera\nNuance Infotech", "Nuance Infotech, Nuance Infotech")), ctx).join()).toContain("W9: the company name is written twice");
+    expect(checkEmailCode(write(good.replace("Sam Rivera\nNuance Infotech", "Best regards\nNuance Infotech")), ctx).join()).toContain("W9: the sign-off does not use the sender's name");
+    // no person known (the display name was the company): only the company, once
+    expect(checkEmailCode(write(good.replace("Sam Rivera\nNuance Infotech", "Nuance Infotech")), { ...ctx, senderName: "" })).toEqual([]);
+  });
+  it("finds who the sender is: a person's display name, never the company twice", () => {
+    expect(senderIdentity({ displayName: "Sam Rivera", email: "sam@x.com", company: "Nuance Infotech" })).toMatchObject({ name: "Sam Rivera", firstName: "Sam", displayNameIsCompany: false });
+    expect(senderIdentity({ displayName: "Nuance Infotech", email: "sam@x.com", company: "Nuance Infotech" })).toMatchObject({ name: "", firstName: "", displayNameIsCompany: true });
+    expect(senderIdentity({ displayName: "nuance infotech pvt", email: null, company: "Nuance Infotech" }).displayNameIsCompany).toBe(true);
+    expect(senderIdentity({ displayName: "", email: "sourabh.k@gmail.com", company: "Nuance Infotech" })).toMatchObject({ name: "Sourabh", firstName: "Sourabh" });
+  });
+  it("picks the tools row by the lead's business type OR industry, several keywords per row, the most specific wins, else the default", () => {
+    const rows = { default: "React stack.", "health, medical": "FHIR and HIPAA-ready.", healthtech: "Healthtech stack.", fintech: "Payments stack." };
+    expect(toolsFor("software agency", rows, "Hospital & Health Care")).toBe("FHIR and HIPAA-ready.");
+    expect(toolsFor("healthtech platform", rows, null)).toBe("Healthtech stack."); // the longer keyword is more specific
+    expect(toolsFor("saas", rows, "fintech")).toBe("Payments stack.");
+    expect(toolsFor("logistics", rows, "transport")).toBe("React stack.");
+    expect(toolsFor("logistics", { x: "y" })).toBe("");
+  });
+  it("tells the writer the sign-off, the reply-only ask, and puts the style guide and samples in the system text (the part that is the same for every lead)", () => {
+    const wctx = { firstName: "Asha", title: "CTO", company: "Acme", businessType: "healthtech", senderFirstName: "Sam", senderName: "Sam Rivera", senderCompany: "Nuance Infotech", offerName: "White-label development", caseStudy: null, facts: facts, tools: "tools", config: { ...cfg, reference_emails: ["Hi A, sample one.", "Hi B, sample two."] } };
+    const { system, prompt } = buildWritePrompt(wctx);
+    expect(system).toContain("SAMPLE 1: Hi A, sample one.");
+    expect(system).toContain("just reply");
+    expect(system).toContain("never write the company name twice");
+    expect(prompt).not.toContain("SAMPLE 1");
+    expect(prompt).toContain("SENDER_NAME: Sam Rivera");
+    expect(prompt).toContain("SENDER_COMPANY: Nuance Infotech");
+    expect(prompt).toContain("OFFER (internal, never in the subject): White-label development");
   });
   it("flags a title-case or long subject and a too-short body", () => {
     expect(checkEmailCode(write(good, "Ideas For Acme Today"), ctx).join()).toContain("W5: subject in title case");

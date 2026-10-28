@@ -7,7 +7,10 @@ import {
   parseJsonLoose,
   scoreLead,
   screenSchema,
-  searchHitMatchesCompany,
+  isNeverFetched,
+  isNotASourceHost,
+  isOwnHost,
+  searchHitSource,
   triggerTypeOf,
   type FactType,
   type PageText,
@@ -52,19 +55,14 @@ export interface Fact {
 
 const SIGNAL_TYPE: Record<string, "funding" | "hiring" | "expansion" | "launch" | "leadership" | "other"> = { hiring: "hiring", funding: "funding", launch: "launch", "team-change": "leadership" };
 const titleOf = (type: string, statement: string) => `[${type}] ${statement}`.slice(0, 400);
+/** evidence_items.source_type of press that passed the "names the exact company and domain" check (older research stored press as "news" without it) */
+const PRESS_SOURCE = "web";
 const TITLE_RE = /^\[([a-z-]+)\] (.*)$/s;
-
-const isOwnHost = (url: string, domain: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").endsWith(domain);
-  } catch {
-    return false;
-  }
-};
 
 /** Saved facts of a company (evidence rows written by this module), newest first. */
 export async function loadFacts(ctx: WorkerCtx, companyId: string, devKeywords: string[]): Promise<Fact[]> {
-  const all = must(await ctx.db.from("evidence_items").select("id, url, title, snippet, retrieved_at, research_runs(provider)").eq("company_id", companyId), "load facts");
+  const all = must(await ctx.db.from("evidence_items").select("id, url, title, snippet, retrieved_at, source_type, research_runs(provider)").eq("company_id", companyId), "load facts");
+  const company = (await ctx.db.from("companies").select("name, domain").eq("id", companyId).maybeSingle()).data;
   // in a real run only evidence that real adapters fetched is a fact (older demo rows of the same company are ignored)
   const rows = researchIsLive(ctx) ? all.filter((r) => r.research_runs?.provider === RESEARCH_LIVE) : all;
   const sig = must(await ctx.db.from("signals").select("evidence_item_id, signal_date").eq("company_id", companyId), "load fact dates");
@@ -72,6 +70,9 @@ export async function loadFacts(ctx: WorkerCtx, companyId: string, devKeywords: 
   for (const r of rows) {
     const m = TITLE_RE.exec(r.title ?? "");
     if (!m || !r.snippet) continue;
+    // A fact must come from a page about THIS company: its own site, or press that was checked to name the exact company and domain.
+    // Press found by earlier versions was stored as "news" without that check (it could be another company, LinkedIn or a directory): not used.
+    if (company && !isOwnHost(r.url, company.domain) && (r.source_type !== PRESS_SOURCE || isNeverFetched(r.url) || isNotASourceHost(r.url))) continue;
     const type = m[1] as FactType;
     const date = sig.find((s) => s.evidence_item_id === r.id)?.signal_date ?? null;
     out.push({ evidenceId: r.id, type, statement: m[2]!, quote: r.snippet, url: r.url, date, retrievedAt: r.retrieved_at, trigger: triggerTypeOf({ type, statement: m[2]!, quote: r.snippet }, devKeywords) });
@@ -82,11 +83,18 @@ const TRIGGER_ORDER: TriggerType[] = ["none", "tech-change", "public-talk", "awa
 const triggerRank = (f: Fact) => TRIGGER_ORDER.indexOf(f.trigger) * 1000 + (f.date ? new Date(f.date).getTime() / DAY / 1000 : 0);
 
 // ---------------------------------------------------------------- Stage A (C1): does the homepage open, and does the business fit?
-/** The offer a campaign sells: the quick check judges a company against it as well as against the industry list. */
-export async function offerOf(ctx: WorkerCtx, offerId: string | null): Promise<{ name: string; description: string | null } | null> {
-  if (!offerId) return null;
-  const { data } = await ctx.db.from("offers").select("name, description").eq("id", offerId).maybeSingle();
-  return data ?? null;
+/**
+ * What a campaign sells: the quick check judges a company against it as well as against the industry list. A campaign with several
+ * offers is judged against all of them (a company that fits any one offer passes); which offer a lead gets is decided later, by rules.
+ */
+export async function offerOf(ctx: WorkerCtx, campaign: { offer_id: string | null; offer_ids?: string[] | null }): Promise<{ name: string; description: string | null } | null> {
+  const ids = [...new Set([...(campaign.offer_ids ?? []), ...(campaign.offer_id ? [campaign.offer_id] : [])])];
+  if (!ids.length) return null;
+  const { data } = await ctx.db.from("offers").select("id, name, description").in("id", ids).is("deleted_at", null);
+  const rows = ids.flatMap((id) => (data ?? []).filter((o) => o.id === id));
+  if (!rows.length) return null;
+  if (rows.length === 1) return { name: rows[0]!.name, description: rows[0]!.description };
+  return { name: rows.map((o) => o.name).join(" / "), description: rows.map((o) => `${o.name}: ${o.description ?? ""}`.trim()).join(" | ") };
 }
 
 type ScreenResult = ReturnType<typeof screenSchema.parse>;
@@ -129,7 +137,7 @@ export async function screenLead(ctx: WorkerCtx, paid: Paid, cfg: WorkflowConfig
   }
 
   const market = (lead.campaigns?.icp as { industries?: string[] } | undefined)?.industries?.join(", ") ?? "";
-  const screen = await screenCompanySite(ctx, paid, cfg, { domain: company.domain, name: company.name ?? company.domain, market, offer: await offerOf(ctx, lead.campaigns?.offer_id ?? null) });
+  const screen = await screenCompanySite(ctx, paid, cfg, { domain: company.domain, name: company.name ?? company.domain, market, offer: lead.campaigns ? await offerOf(ctx, lead.campaigns) : null });
   if (!screen.ok) return skipLead(ctx.db, lead, screen.reason, screen.detail) as Promise<Skipped>;
   const result = screen.result;
 
@@ -158,20 +166,25 @@ export async function researchLead(
   const dates = new Map<string, string>();
   for (const path of SITE_PATHS.slice(0, cfg.pages_per_site)) {
     const url = `https://${company.domain}${path}`;
+    if (isNeverFetched(url, { linkedinEnabled: cfg.linkedin_enabled })) break; // the "website" is LinkedIn or Crunchbase: nothing here is read
     try {
       const page = await ctx.adapters.fetcher.fetchPage(url);
-      if (page.status === 200 && page.text.trim()) pages.push({ url: page.url, text: page.text });
+      // a redirect to another company's site gives a page about someone else: it is not used
+      if (page.status === 200 && page.text.trim() && isOwnHost(page.url, company.domain)) pages.push({ url: page.url, text: page.text });
+      else if (page.status === 200 && page.text.trim()) ctx.log(`${url} redirects to ${page.url}: not this company's site, not used`);
     } catch (e) {
       ctx.log(`fetch ${url} failed: ${(e as Error).message}`);
     }
   }
   const siteOnly = pages.length;
   const name = company.name ?? company.domain;
-  for (const q of [`${name} funding`, `${name} hiring`]) {
+  // the domain in the query keeps look-alike companies out of the results
+  for (const q of [`${name} ${company.domain} funding`, `${name} ${company.domain} hiring`]) {
     try {
       const res = await paid("search", "search", () => ctx.adapters.search.search({ query: q, num: 3 }));
       for (const hit of res.results) {
-        if (!searchHitMatchesCompany(hit, { name: company.name, domain: company.domain })) continue; // look-alike companies are rejected
+        // only the company's own pages, or press that names the exact company AND its domain; other companies, LinkedIn, Crunchbase and job boards are dropped
+        if (!searchHitSource(hit, { name: company.name, domain: company.domain }, { linkedinEnabled: cfg.linkedin_enabled })) continue;
         if (!pages.some((p) => p.url === hit.url)) pages.push({ url: hit.url, text: `${hit.title}. ${hit.snippet}` });
         if (hit.publishedAt) dates.set(hit.url, hit.publishedAt);
       }
@@ -229,7 +242,7 @@ export async function researchLead(
     const ev = must(
       await ctx.db
         .from("evidence_items")
-        .upsert({ company_id: company.id, research_run_id: run.id, url: f.source_url, title: titleOf(f.type, f.statement), snippet: f.quote, retrieved_at: stamp, source_type: own ? "company_site" : "news", confidence: own ? 0.9 : 0.6 }, { onConflict: "company_id,url" })
+        .upsert({ company_id: company.id, research_run_id: run.id, url: f.source_url, title: titleOf(f.type, f.statement), snippet: f.quote, retrieved_at: stamp, source_type: own ? "company_site" : PRESS_SOURCE, confidence: own ? 0.9 : 0.6 }, { onConflict: "company_id,url" })
         .select("id")
         .single(),
       "save fact",

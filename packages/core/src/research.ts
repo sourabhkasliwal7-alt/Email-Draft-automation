@@ -92,3 +92,74 @@ export function classifyVerification(item: ExtractedItem, domain: string, signal
   if (item.type === "hiring") return own && /career|jobs|join/.test(path) ? "verified" : "possible";
   return own ? "verified" : "possible";
 }
+
+// ---------------------------------------------------------------- which sites research may read (SRS R10)
+/** Never fetched, never used as a source: LinkedIn (unless the admin turned LinkedIn on) and Crunchbase (always). */
+export const RESEARCH_NEVER_FETCH = ["linkedin.com", "crunchbase.com"] as const;
+
+/**
+ * Sites that can never be "news or press about the company": job boards, review and company-data directories, social networks and
+ * contact-data sellers. A search hit on one of these says nothing checkable about the company, so it is dropped.
+ */
+export const RESEARCH_NOT_A_SOURCE = [
+  "linkedin.com", "crunchbase.com",
+  "indeed.com", "glassdoor.com", "ziprecruiter.com", "monster.com", "naukri.com", "simplyhired.com", "careerbuilder.com", "wellfound.com", "angel.co", "ambitionbox.com", "comparably.com", "builtin.com",
+  "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com", "youtube.com",
+  "clutch.co", "goodfirms.co", "g2.com", "capterra.com", "trustpilot.com", "yelp.com", "yellowpages.com", "bbb.org", "mapquest.com",
+  "zoominfo.com", "dnb.com", "owler.com", "tracxn.com", "pitchbook.com", "rocketreach.co", "apollo.io", "signalhire.com", "lusha.com", "cbinsights.com", "leadiq.com",
+] as const;
+
+const hostName = (url: string): string | null => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+};
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const onList = (host: string, list: readonly string[]) => list.some((d) => host === d || host.endsWith(`.${d}`));
+
+/** True when this address is the company's own site: its domain or a sub-domain of it (not a similar-looking name). */
+export function isOwnHost(url: string, domain: string): boolean {
+  const host = hostName(url);
+  const own = domain.toLowerCase().replace(/^www\./, "");
+  return host !== null && (host === own || host.endsWith(`.${own}`));
+}
+
+/** True for addresses that must not be fetched or used: Crunchbase always, LinkedIn unless `linkedinEnabled`. */
+export function isNeverFetched(url: string, opts: { linkedinEnabled?: boolean } = {}): boolean {
+  const host = hostName(url.includes("://") ? url : `https://${url}`);
+  if (!host) return true;
+  return onList(host, opts.linkedinEnabled ? ["crunchbase.com"] : RESEARCH_NEVER_FETCH);
+}
+
+/**
+ * Whether a search result may be used as a source about THIS company:
+ *  - "own": it is on the company's own domain;
+ *  - "press": it is on another site that is not blocked or a directory, and its title or snippet names the exact company AND gives its domain
+ *    (so a different company with a similar name, such as quadrantinc.com for quadrant.com, is never taken);
+ *  - null: not usable.
+ */
+export function searchHitSource(
+  hit: { title: string; snippet: string; url: string },
+  company: { name: string | null; domain: string },
+  opts: { linkedinEnabled?: boolean } = {},
+): "own" | "press" | null {
+  const host = hostName(hit.url);
+  if (!host || isNeverFetched(hit.url, opts)) return null;
+  if (isOwnHost(hit.url, company.domain)) return "own";
+  if (onList(host, RESEARCH_NOT_A_SOURCE)) return null;
+  const name = company.name?.trim() ?? "";
+  if (name.length < 3) return null;
+  const text = normText(`${hit.title} ${hit.snippet}`);
+  const domain = company.domain.toLowerCase().replace(/^www\./, "");
+  // the exact name as whole words (the name inside the domain does not count), and the domain written out
+  const wholeName = new RegExp(`(^|[^a-z0-9])${escapeRegExp(normText(name))}($|[^a-z0-9])`).test(text.split(domain).join(" "));
+  return wholeName && text.includes(domain) ? "press" : null;
+}
+
+/** True for job boards, review and company-data directories, social networks and contact-data sellers: never a source about a company. */
+export function isNotASourceHost(url: string): boolean {
+  const host = hostName(url);
+  return host === null || onList(host, RESEARCH_NOT_A_SOURCE);
+}
